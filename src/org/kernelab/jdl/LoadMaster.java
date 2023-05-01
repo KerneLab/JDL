@@ -5,22 +5,25 @@ import java.sql.SQLException;
 import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.Set;
+import java.util.concurrent.LinkedBlockingQueue;
 
 import org.kernelab.basis.sql.DataBase;
 
-public class LoadMaster
+public class LoadMaster implements Runnable
 {
-	private RecordParser			parser;
+	private RecordParser				parser;
 
-	private InsertTemplate			template;
+	private InsertTemplate				template;
 
-	private DataBase				dataBase;
+	private DataBase					dataBase;
 
-	private long[]					result			= new long[] { 0L, 0L };
+	private long[]						result			= new long[] { 0L, 0L };
 
-	private Set<LoadWorker>			workers			= new LinkedHashSet<LoadWorker>();
+	private Set<LoadWorker>				workers			= new LinkedHashSet<LoadWorker>();
 
-	private LinkedList<LoadWorker>	readyWorkers	= new LinkedList<LoadWorker>();
+	private LinkedList<LoadWorker>		readyWorkers	= new LinkedList<LoadWorker>();
+
+	private LinkedBlockingQueue<Record>	recordsQueue	= new LinkedBlockingQueue<Record>(10000);
 
 	public DataBase getDataBase()
 	{
@@ -30,6 +33,11 @@ public class LoadMaster
 	public RecordParser getParser()
 	{
 		return parser;
+	}
+
+	public LinkedBlockingQueue<Record> getRecordsQueue()
+	{
+		return recordsQueue;
 	}
 
 	public InsertTemplate getTemplate()
@@ -67,26 +75,115 @@ public class LoadMaster
 		{
 			this.readyWorkers.add(worker);
 		}
+
+		synchronized (this)
+		{
+			this.notifyAll();
+		}
 	}
 
 	protected void reportRead(LoadWorker worker)
 	{
-		if (!this.parser.hasNext())
+		synchronized (this)
 		{
-			worker.stop();
-			synchronized (this.workers)
+			this.notifyAll();
+		}
+	}
+
+	@Override
+	public void run()
+	{
+		new Thread(new Runnable()
+		{
+			@Override
+			public void run()
 			{
-				for (LoadWorker w : this.workers)
+				while (parser.hasNext())
 				{
-					if (worker != w)
+					try
 					{
-						w.stop();
+						recordsQueue.put(parser.next());
+					}
+					catch (InterruptedException e)
+					{
 					}
 				}
+				try
+				{
+					recordsQueue.put(RecordParser.END);
+				}
+				catch (InterruptedException e)
+				{
+				}
+				LoadMaster.this.stop();
 			}
+		}).start();
+
+		try
+		{
+			synchronized (this.workers)
+			{
+				LoadWorker newWorker = this.newWorker();
+				this.workers.add(newWorker);
+				newWorker.start();
+			}
+		}
+		catch (Exception e)
+		{
+			e.printStackTrace();
 			return;
 		}
 
+		while (true)
+		{
+			synchronized (this)
+			{
+				try
+				{
+					this.wait();
+				}
+				catch (InterruptedException e)
+				{
+				}
+			}
+
+			if (!this.parser.hasNext())
+			{
+				break;
+			}
+			else
+			{
+				shiftWorker();
+			}
+		}
+	}
+
+	public LoadMaster setDataBase(DataBase dataBase)
+	{
+		this.dataBase = dataBase;
+		return this;
+	}
+
+	public LoadMaster setParser(RecordParser parser)
+	{
+		this.parser = parser;
+		return this;
+	}
+
+	protected LoadMaster setRecordsQueue(LinkedBlockingQueue<Record> recordsQueue)
+	{
+		this.recordsQueue = recordsQueue;
+		return this;
+	}
+
+	public LoadMaster setTemplate(InsertTemplate template)
+	{
+		this.template = template;
+		return this;
+	}
+
+	protected void shiftWorker()
+	{
 		synchronized (this.readyWorkers)
 		{
 			if (!this.readyWorkers.isEmpty())
@@ -115,27 +212,14 @@ public class LoadMaster
 		}
 	}
 
-	public LoadMaster setDataBase(DataBase dataBase)
+	public void stop()
 	{
-		this.dataBase = dataBase;
-		return this;
-	}
-
-	public LoadMaster setParser(RecordParser parser)
-	{
-		this.parser = parser;
-		return this;
-	}
-
-	public LoadMaster setTemplate(InsertTemplate template)
-	{
-		this.template = template;
-		return this;
-	}
-
-	public LoadMaster start() throws Exception
-	{
-		newWorker().start();
-		return this;
+		synchronized (this.workers)
+		{
+			for (LoadWorker worker : this.workers)
+			{
+				worker.stop();
+			}
+		}
 	}
 }

@@ -7,6 +7,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.concurrent.BlockingQueue;
 
 public class LoadWorker implements Runnable
 {
@@ -236,19 +237,26 @@ public class LoadWorker implements Runnable
 		record.printError(System.err, ex);
 	}
 
-	protected void readRecords(RecordParser parser, List<Record> records)
+	protected void readRecords(BlockingQueue<Record> queue, List<Record> records)
 	{
 		records.clear();
-
+		Record rec = null;
 		for (int i = 0; i < this.getBatchSize(); i++)
 		{
-			if (!parser.hasNext())
+			try
 			{
-				break;
+				rec = queue.take();
+				if (rec == RecordParser.END)
+				{
+					break;
+				}
+				else
+				{
+					records.add(rec);
+				}
 			}
-			else
+			catch (InterruptedException e)
 			{
-				records.add(parser.next());
 			}
 		}
 	}
@@ -267,7 +275,7 @@ public class LoadWorker implements Runnable
 					this.setRunning(true);
 				}
 
-				this.readRecords(this.getMaster().getParser(), this.getRecords());
+				this.readRecords(this.getMaster().getRecordsQueue(), this.getRecords());
 
 				this.getMaster().reportRead(this);
 

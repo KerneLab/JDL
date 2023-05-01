@@ -10,6 +10,8 @@ import org.kernelab.basis.Tools;
 
 public class RecordParser implements Iterator<Record>
 {
+	public static final Record END = new Record(0, null);
+
 	protected static boolean samePrefix(char[] a, int from, char[] b)
 	{
 		for (int i = from; i < a.length; i++)
