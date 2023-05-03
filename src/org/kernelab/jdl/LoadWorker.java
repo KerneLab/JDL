@@ -7,13 +7,25 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+
+import org.kernelab.basis.Tools;
 
 public class LoadWorker implements Runnable
 {
-	private static int			ID			= 0;
+	private static int			ID				= 0;
 
-	private final int			id			= ID++;
+	private final int			id				= ID++;
+
+	protected final Lock		lock			= new ReentrantLock();
+
+	protected final Condition	notStarted		= lock.newCondition();
+
+	protected final Condition	untilWaiting	= lock.newCondition();
+
+	protected final Condition	untilWakeup		= lock.newCondition();
 
 	private LoadMaster			master;
 
@@ -21,17 +33,21 @@ public class LoadWorker implements Runnable
 
 	private Thread				thread;
 
-	private boolean				stopping	= false;
+	private boolean				waiting			= false;
 
-	private boolean				running		= false;
+	private boolean				stopping		= false;
+
+	private boolean				started			= false;
 
 	private PreparedStatement	statement;
 
-	private LinkedList<Record>	records		= new LinkedList<Record>();
+	private LinkedList<Record>	records			= new LinkedList<Record>();
 
-	private int					batchSize	= 1000;
+	// private boolean running = false;
 
-	private LinkedList<Record>	bads		= new LinkedList<Record>();
+	private int					batchSize		= 1000;
+
+	private LinkedList<Record>	bads			= new LinkedList<Record>();
 
 	public LoadWorker(LoadMaster master, Connection conn)
 	{
@@ -76,25 +92,37 @@ public class LoadWorker implements Runnable
 		return result;
 	}
 
-	public void destroy()
+	protected void destroy()
 	{
-		if (this.getMaster() != null)
-		{
-			this.getMaster().reportDestroy(this);
-			this.setMaster(null);
-		}
-		this.setStatement(null);
+		LoadMaster master = null;
+
+		lock.lock();
 		try
 		{
-			this.getConnection().close();
-			this.setConnection(null);
+			master = this.getMaster();
+			this.setMaster(null);
+			this.setStatement(null);
+			try
+			{
+				this.getConnection().close();
+				this.setConnection(null);
+			}
+			catch (Exception e)
+			{
+			}
+			this.getRecords().clear();
+			this.getBads().clear();
+			this.setThread(null);
 		}
-		catch (Exception e)
+		finally
 		{
+			lock.unlock();
 		}
-		this.getRecords().clear();
-		this.getBads().clear();
-		this.setThread(null);
+
+		if (master != null)
+		{
+			master.reportDestroy(this);
+		}
 	}
 
 	protected int[] doBatch(Connection conn, PreparedStatement ps, int[] index, LinkedList<Record> records)
@@ -174,6 +202,11 @@ public class LoadWorker implements Runnable
 		return connection;
 	}
 
+	public int getId()
+	{
+		return id;
+	}
+
 	protected LoadMaster getMaster()
 	{
 		return master;
@@ -217,48 +250,69 @@ public class LoadWorker implements Runnable
 		}
 	}
 
-	public synchronized boolean isRunning()
+	protected boolean isStarted()
 	{
-		return running;
+		return started;
 	}
 
-	public synchronized boolean isStopped()
-	{
-		return this.getThread() == null;
-	}
-
-	public synchronized boolean isStopping()
+	protected boolean isStopping()
 	{
 		return stopping;
 	}
 
-	protected void logBad(Record record, Exception ex)
+	// protected boolean isRunning()
+	// {
+	// return running;
+	// }
+
+	protected boolean isWaiting()
 	{
-		record.printError(System.err, ex);
+		return waiting;
 	}
 
-	protected void readRecords(BlockingQueue<Record> queue, List<Record> records)
+	// protected boolean isStopped()
+	// {
+	// return this.getThread() == null;
+	// }
+
+	protected void log(String log)
 	{
+		Tools.debug(log);
+	}
+
+	protected void logBad(Record record, Exception ex)
+	{
+		record.printError(this.getMaster().getErr(), ex);
+	}
+
+	protected int readRecords(RecordParser parser, List<Record> records)
+	{
+		int bads = 0;
 		records.clear();
-		Record rec = null;
+		Record record = null;
+		int need = this.getTemplate().getItems().length;
 		for (int i = 0; i < this.getBatchSize(); i++)
 		{
-			try
+			if (parser.hasNext())
 			{
-				rec = queue.take();
-				if (rec == RecordParser.END)
+				record = parser.next();
+				if (record.data.length != need)
 				{
-					break;
+					bads++;
+					this.logBad(record,
+							new SQLException(record.data.length + " columns found but need " + need + " to load"));
 				}
 				else
 				{
-					records.add(rec);
+					records.add(record);
 				}
 			}
-			catch (InterruptedException e)
+			else
 			{
+				break;
 			}
 		}
+		return bads;
 	}
 
 	@Override
@@ -268,36 +322,87 @@ public class LoadWorker implements Runnable
 		{
 			this.init();
 
-			while (!this.isStopping())
+			int badReads = 0;
+
+			while (true)
 			{
-				synchronized (this)
+				lock.lock();
+				try
 				{
-					this.setRunning(true);
+					if (!this.isStarted())
+					{
+						this.setStarted(true);
+						notStarted.signalAll();
+					}
+
+					if (!this.isStopping())
+					{
+						this.setWaiting(true);
+						untilWaiting.signalAll();
+						try
+						{
+							untilWakeup.await();
+						}
+						catch (InterruptedException e)
+						{
+						}
+					}
+
+					this.setWaiting(false);
+
+					if (this.isStopping())
+					{
+						break;
+					}
+				}
+				finally
+				{
+					lock.unlock();
 				}
 
-				this.readRecords(this.getMaster().getRecordsQueue(), this.getRecords());
+				// synchronized (this)
+				// {
+				// if (!this.isStarted())
+				// {
+				// this.setStarted(true);
+				// this.notifyAll();
+				// }
+				// // this.setRunning(false);
+				// if (!this.isStopping())
+				// {
+				// // log("Worker#" + this.getId() + " waiting");
+				// try
+				// {
+				// this.wait();
+				// }
+				// catch (InterruptedException e)
+				// {
+				// }
+				// // log("Worker#" + this.getId() + " wakeup");
+				// }
+				//
+				// if (this.isStopping())
+				// {
+				// break;
+				// }
+				// }
+
+				// synchronized (this)
+				// {
+				// this.setRunning(true);
+				// }
+
+				// log("Worker#" + id + " wakeup");
+				this.getMaster().reportReading(this);
+
+				badReads = this.readRecords(this.getMaster().getParser(), this.getRecords());
 
 				this.getMaster().reportRead(this);
 
 				int[] result = this.doBatch(this.getConnection(), this.getStatement(), this.getTemplate().getIndexes(),
 						this.getRecords());
 
-				this.getMaster().reportLoaded(this, result[0], result[1]);
-
-				synchronized (this)
-				{
-					this.setRunning(false);
-					if (!this.isStopping())
-					{
-						try
-						{
-							this.wait();
-						}
-						catch (InterruptedException e)
-						{
-						}
-					}
-				}
+				this.getMaster().reportLoaded(this, result[0] + badReads, result[1] + badReads);
 			}
 		}
 		catch (SQLException ex)
@@ -306,11 +411,11 @@ public class LoadWorker implements Runnable
 		}
 		finally
 		{
-			synchronized (this)
-			{
-				this.destroy();
-				this.notifyAll();
-			}
+			this.destroy();
+			// synchronized (this)
+			// {
+			// this.notifyAll();
+			// }
 		}
 	}
 
@@ -344,11 +449,17 @@ public class LoadWorker implements Runnable
 		return this;
 	}
 
-	protected LoadWorker setRunning(boolean running)
+	protected LoadWorker setStarted(boolean waiting)
 	{
-		this.running = running;
+		this.started = waiting;
 		return this;
 	}
+
+	// protected LoadWorker setRunning(boolean running)
+	// {
+	// this.running = running;
+	// return this;
+	// }
 
 	protected void setStatement(PreparedStatement statement)
 	{
@@ -367,26 +478,60 @@ public class LoadWorker implements Runnable
 		return this;
 	}
 
-	public synchronized Thread start()
+	protected LoadWorker setWaiting(boolean waiting)
 	{
-		Thread t = this.getThread();
-		if (t != null)
+		this.waiting = waiting;
+		return this;
+	}
+
+	public Thread start()
+	{
+		Thread t = null;
+		lock.lock();
+		try
 		{
-			return t;
+			t = this.getThread();
+			if (t != null)
+			{
+				return t;
+			}
+			t = new Thread(this);
+			this.setThread(t);
 		}
-		t = new Thread(this);
-		this.setThread(t);
+		finally
+		{
+			lock.unlock();
+		}
 		t.start();
 		return t;
 	}
 
-	public synchronized void stop()
+	public void stop()
 	{
-		Thread t = this.getThread();
-		if (t != null)
+		lock.lock();
+		try
 		{
-			this.setStopping(true);
-			this.notifyAll();
+			Thread t = this.getThread();
+			if (t != null)
+			{
+				this.setStopping(true);
+				t.interrupt();
+				// while (!this.isWaiting())
+				// {
+				// try
+				// {
+				// untilWaiting.await();
+				// }
+				// catch (InterruptedException e)
+				// {
+				// }
+				// }
+				// untilWakeup.signalAll();
+			}
+		}
+		finally
+		{
+			lock.unlock();
 		}
 	}
 
@@ -423,12 +568,56 @@ public class LoadWorker implements Runnable
 		}
 	}
 
-	public synchronized void wakeup()
+	public LoadWorker waitForStarted()
 	{
-		Thread t = this.getThread();
-		if (t != null)
+		lock.lock();
+		try
 		{
-			this.notifyAll();
+			while (!this.isStarted())
+			{
+				try
+				{
+					notStarted.await();
+				}
+				catch (InterruptedException e)
+				{
+				}
+			}
+		}
+		finally
+		{
+			lock.unlock();
+		}
+		return this;
+	}
+
+	public void wakeup()
+	{
+		lock.lock();
+		try
+		{
+			Thread t = this.getThread();
+			if (t == null)
+			{
+				return;
+			}
+
+			while (!this.isStopping() && !this.isWaiting())
+			{
+				try
+				{
+					untilWaiting.await();
+				}
+				catch (InterruptedException e)
+				{
+				}
+			}
+
+			untilWakeup.signalAll();
+		}
+		finally
+		{
+			lock.unlock();
 		}
 	}
 }

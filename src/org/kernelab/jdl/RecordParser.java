@@ -10,8 +10,6 @@ import org.kernelab.basis.Tools;
 
 public class RecordParser implements Iterator<Record>
 {
-	public static final Record END = new Record(0, null);
-
 	protected static boolean samePrefix(char[] a, int from, char[] b)
 	{
 		for (int i = from; i < a.length; i++)
@@ -39,6 +37,8 @@ public class RecordParser implements Iterator<Record>
 	private char[]			recordTerminator;
 
 	private char[]			columnTerminator;
+
+	private int				skip	= 0;
 
 	private Reader			reader;
 
@@ -89,15 +89,27 @@ public class RecordParser implements Iterator<Record>
 		return recordTerminator;
 	}
 
+	public int getSkip()
+	{
+		return skip;
+	}
+
 	@Override
 	public boolean hasNext()
 	{
 		if (!begin)
 		{
+			begin = true;
 			try
 			{
+				for (int i = 0; i < this.skip; i++)
+				{
+					if (this.nextRecord() == null)
+					{
+						break;
+					}
+				}
 				this.next = this.nextRecord();
-				begin = true;
 			}
 			catch (IOException e)
 			{
@@ -234,23 +246,37 @@ public class RecordParser implements Iterator<Record>
 		}
 	}
 
+	@Override
+	public void remove()
+	{
+	}
+
 	protected void setBuff(char[] buff)
 	{
 		this.buff = buff;
 	}
 
-	public void setColumnTerminator(String columnTerminator)
+	public RecordParser setColumnTerminator(String columnTerminator)
 	{
 		this.columnTerminator = columnTerminator != null ? columnTerminator.toCharArray() : null;
+		return this;
 	}
 
-	public void setReader(Reader reader)
+	public RecordParser setReader(Reader reader)
 	{
 		this.reader = reader;
+		return this;
 	}
 
-	public void setRecordTerminator(String recordTerminator)
+	public RecordParser setRecordTerminator(String recordTerminator)
 	{
 		this.recordTerminator = recordTerminator != null ? recordTerminator.toCharArray() : null;
+		return this;
+	}
+
+	public RecordParser setSkip(int skip)
+	{
+		this.skip = skip;
+		return this;
 	}
 }

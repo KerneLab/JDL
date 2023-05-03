@@ -4,9 +4,11 @@ import java.util.List;
 
 public class InsertTemplate
 {
-	private String	insert;
+	private String[]	items;
 
-	private int[]	indexes;
+	private String		insert;
+
+	private int[]		indexes;
 
 	public int[] getIndexes()
 	{
@@ -16,6 +18,11 @@ public class InsertTemplate
 	public String getInsert()
 	{
 		return insert;
+	}
+
+	public String[] getItems()
+	{
+		return items;
 	}
 
 	protected InsertTemplate setIndexes(int[] indexes)
@@ -44,6 +51,12 @@ public class InsertTemplate
 	protected InsertTemplate setInsert(String insert)
 	{
 		this.insert = insert;
+		return this;
+	}
+
+	protected InsertTemplate setItems(String[] items)
+	{
+		this.items = items;
 		return this;
 	}
 }

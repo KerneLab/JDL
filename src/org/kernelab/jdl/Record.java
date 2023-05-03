@@ -1,6 +1,6 @@
 package org.kernelab.jdl;
 
-import java.io.PrintStream;
+import java.io.PrintWriter;
 
 public class Record
 {
@@ -14,7 +14,7 @@ public class Record
 		this.data = data;
 	}
 
-	public void printError(PrintStream err, Exception ex)
+	public void printError(PrintWriter err, Exception ex)
 	{
 		err.println("Rec#" + id + ": " + ex.getLocalizedMessage());
 	}
