@@ -5,7 +5,6 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.Reader;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -62,7 +61,7 @@ public class LoadBuilder
 
 	private String				table;
 
-	private String				charSet;
+	private String				charset;
 
 	private String				columnTerminator;
 
@@ -77,9 +76,8 @@ public class LoadBuilder
 	public RecordParser buildParser() throws IOException
 	{
 		InputStream is = new FileInputStream(new File(this.getFilePath()));
-		Reader in = new InputStreamReader(is, this.getCharSet());
 		return new RecordParser() //
-				.setReader(in) //
+				.setReader(new InputStreamReader(is, this.getCharset())) //
 				.setColumnTerminator(this.getColumnTerminator()) //
 				.setRecordTerminator(this.getRecordTerminator()) //
 				.setSkip(this.getSkip() != null ? this.getSkip() : 0) //
@@ -132,9 +130,9 @@ public class LoadBuilder
 				m.reset(m.group()).replaceFirst(replace) };
 	}
 
-	protected String getCharSet()
+	protected String getCharset()
 	{
-		return charSet;
+		return charset;
 	}
 
 	protected String getColumnTerminator()
@@ -200,13 +198,13 @@ public class LoadBuilder
 		log("table: " + table);
 
 		res = extract(res[0], "^\\s*CHARACTER\\s+SET\\s+(\\S+?)\\s+", "$1");
-		String charSet = res[1];
-		if (charSet == null)
+		String charset = res[1];
+		if (charset == null)
 		{
-			throw new IllegalArgumentException("Character set not given in command: " + cmd);
+			throw new IllegalArgumentException("Charset not given in command: " + cmd);
 		}
-		this.setCharSet(charSet);
-		log("charSet: " + charSet);
+		this.setCharset(charset);
+		log("charset: " + charset);
 
 		res = extract(res[0], "^\\s*(?:FIELDS|COLUMNS)\\s+TERMINATED\\s+BY\\s+(.+?')\\s+(?:(?=LINES\\s+)|$)", "$1");
 		String colSplit = restoreText(res[1]);
@@ -251,9 +249,9 @@ public class LoadBuilder
 		return this;
 	}
 
-	protected void setCharSet(String charSet)
+	protected void setCharset(String charset)
 	{
-		this.charSet = charSet;
+		this.charset = charset;
 	}
 
 	protected void setColumnTerminator(String columnTerminator)

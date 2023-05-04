@@ -6,7 +6,9 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
-import java.io.UnsupportedEncodingException;
+import java.io.Reader;
+import java.io.Writer;
+import java.nio.charset.Charset;
 import java.sql.Blob;
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -24,29 +26,39 @@ import org.kernelab.basis.JSON;
 import org.kernelab.basis.JSON.JSAN;
 import org.kernelab.basis.JSON.Pair;
 import org.kernelab.basis.Tools;
+import org.kernelab.basis.Variable;
 import org.kernelab.basis.sql.SQLKit;
 
 public class CommandClient
 {
+	public static final String DEFAULT_HINT = "SQL>";
+
+	public static void main(String[] args)
+	{
+		try
+		{
+			System.exit(newInstance(args).interact() ? 0 : 1);
+		}
+		catch (IOException e)
+		{
+			e.printStackTrace();
+			System.exit(1);
+		}
+	}
+
 	public static CommandClient newInstance(String[] args)
 	{
 		Entrance entr = new Entrance().handle(args);
 		return new CommandClient() //
 				.setDataBase(entr.parameter("url"), entr.parameter("usr"), entr.parameter("pwd")) //
+				.setConcurrency(Variable.asInteger(entr.parameter("conc"), 0)) //
 				.setHint(entr.parameter("hint")) //
 		;
 	}
 
-	public static OutputStreamWriter outputStreamToWriter(OutputStream os, String charSet)
+	public static Reader readerOf(InputStream is)
 	{
-		try
-		{
-			return new OutputStreamWriter(System.out, "UTF-8");
-		}
-		catch (UnsupportedEncodingException e)
-		{
-			return new OutputStreamWriter(System.out);
-		}
+		return new InputStreamReader(is, Charset.defaultCharset());
 	}
 
 	public static final JSAN resultSetToJSAN(ResultSet rs) throws SQLException
@@ -126,9 +138,16 @@ public class CommandClient
 		return jsan;
 	}
 
-	private PrintWriter			out		= new PrintWriter(outputStreamToWriter(System.out, "UTF-8"), true);
+	public static Writer writerOf(OutputStream os)
+	{
+		return new OutputStreamWriter(os, Charset.defaultCharset());
+	}
 
-	private PrintWriter			err		= new PrintWriter(outputStreamToWriter(System.err, "UTF-8"), true);
+	private PrintWriter			out		= new PrintWriter(writerOf(System.out), true);
+
+	private PrintWriter			err		= new PrintWriter(writerOf(System.err), true);
+
+	private int					conc	= 1;
 
 	private String				url;
 
@@ -138,19 +157,9 @@ public class CommandClient
 
 	private ConnectionFactory	dataBase;
 
-	private Connection			connection;
-
-	private String				hint	= "SQL>";
+	private String				hint	= DEFAULT_HINT;
 
 	private boolean				exit	= false;
-
-	protected void ensureConnection() throws SQLException
-	{
-		if (this.getConnection() == null)
-		{
-			this.setConnection(this.newConnection());
-		}
-	}
 
 	public boolean execute(String cmd)
 	{
@@ -162,25 +171,7 @@ public class CommandClient
 			}
 			else if (cmd.matches("(?is)^\\s*LOAD\\s+DATA\\s+.+$"))
 			{
-				LoadBuilder build = new LoadBuilder().resolve(cmd);
-
-				LoadMaster master = new LoadMaster().setDataBase(this.getDataBase()).setParser(build.buildParser())
-						.setTemplate(build.buildTemplate()).setOut(this.getOut()).setErr(this.getErr());
-
-				long ts = System.currentTimeMillis();
-
-				new Thread(master).start();
-
-				master.waitForStopped();
-
-				this.getOut().println("Elapsed: " + ((System.currentTimeMillis() - ts) / 1000) + "s");
-				this.getOut().println("Total: " + master.getResult()[0]);
-				this.getOut().println("Error: " + master.getResult()[1]);
-
-				if (master.getResult()[1] > 0)
-				{
-					return false;
-				}
+				return this.executeLoadData(cmd);
 			}
 			else
 			{
@@ -198,43 +189,98 @@ public class CommandClient
 		}
 	}
 
+	protected boolean executeLoadData(String cmd) throws IOException
+	{
+		LoadBuilder build = new LoadBuilder().resolve(cmd);
+
+		LoadMaster master = new LoadMaster() //
+				.setConcurrency(this.getConcurrency())//
+				.setDataBase(this.getDataBase()) //
+				.setParser(build.buildParser()) //
+				.setTemplate(build.buildTemplate()) //
+				.setOut(this.getOut()).setErr(this.getErr());
+
+		long ts = System.currentTimeMillis();
+
+		new Thread(master).start();
+
+		master.waitForStopped();
+
+		if (master.getResult() == null)
+		{
+			return false;
+		}
+
+		this.getOut().println("Done");
+		this.getOut().println("Elapsed: " + ((System.currentTimeMillis() - ts) / 1000) + "s");
+		this.getOut().println("Total: " + master.getResult()[0] + ", Error: " + master.getResult()[1]);
+
+		if (master.getResult()[1] > 0)
+		{
+			return false;
+		}
+		else
+		{
+			return true;
+		}
+	}
+
 	protected Object executeSQL(String sql) throws SQLException
 	{
-		Statement stmt = null;
+		Connection conn = null;
 		try
 		{
-			this.ensureConnection();
+			conn = this.newConnection();
+			conn.setAutoCommit(true);
 
-			stmt = this.getConnection().createStatement();
-
-			if (stmt.execute(sql))
+			Statement stmt = null;
+			try
 			{
-				return resultSetToJSAN(stmt.getResultSet());
+				stmt = conn.createStatement();
+
+				if (stmt.execute(sql))
+				{
+					return resultSetToJSAN(stmt.getResultSet());
+				}
+				else
+				{
+					return stmt.getUpdateCount();
+				}
 			}
-			else
+			finally
 			{
-				return stmt.getUpdateCount();
+				if (stmt != null)
+				{
+					try
+					{
+						stmt.close();
+					}
+					catch (Exception e)
+					{
+						e.printStackTrace(this.getErr());
+					}
+				}
 			}
 		}
 		finally
 		{
-			if (stmt != null)
+			if (conn != null)
 			{
 				try
 				{
-					stmt.close();
+					conn.close();
 				}
 				catch (Exception e)
 				{
-					e.printStackTrace();
+					e.printStackTrace(this.getErr());
 				}
 			}
 		}
 	}
 
-	protected Connection getConnection()
+	protected int getConcurrency()
 	{
-		return connection;
+		return conc;
 	}
 
 	protected ConnectionFactory getDataBase()
@@ -291,7 +337,7 @@ public class CommandClient
 		Scanner input = null;
 		try
 		{
-			input = new Scanner(new InputStreamReader(System.in, "UTF-8"));
+			input = new Scanner(readerOf(System.in));
 			do
 			{
 				if (Tools.notNullOrEmpty(this.getHint()))
@@ -445,9 +491,9 @@ public class CommandClient
 		}
 	}
 
-	protected CommandClient setConnection(Connection connection)
+	protected CommandClient setConcurrency(int conc)
 	{
-		this.connection = connection;
+		this.conc = conc;
 		return this;
 	}
 
@@ -477,7 +523,7 @@ public class CommandClient
 
 	public CommandClient setHint(String hint)
 	{
-		this.hint = hint != null ? hint : "SQL>";
+		this.hint = hint != null ? hint : DEFAULT_HINT;
 		return this;
 	}
 

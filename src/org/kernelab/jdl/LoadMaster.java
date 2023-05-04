@@ -25,7 +25,9 @@ public class LoadMaster implements Runnable
 
 	private ConnectionFactory		dataBase;
 
-	private long[]					result				= new long[] { 0L, 0L };
+	private int						concurrency			= 1;
+
+	private long[]					result				= null;
 
 	protected final Lock			lock				= new ReentrantLock();
 
@@ -49,11 +51,14 @@ public class LoadMaster implements Runnable
 
 	private Map<String, Boolean>	workersReading		= new LinkedHashMap<String, Boolean>();
 
-	private PrintWriter				out					= new PrintWriter(
-			CommandClient.outputStreamToWriter(System.out, "UTF-8"), true);
+	private PrintWriter				out					= new PrintWriter(CommandClient.writerOf(System.out), true);
 
-	private PrintWriter				err					= new PrintWriter(
-			CommandClient.outputStreamToWriter(System.err, "UTF-8"), true);
+	private PrintWriter				err					= new PrintWriter(CommandClient.writerOf(System.err), true);
+
+	public int getConcurrency()
+	{
+		return concurrency;
+	}
 
 	public ConnectionFactory getDataBase()
 	{
@@ -90,13 +95,15 @@ public class LoadMaster implements Runnable
 		lock.lock();
 		try
 		{
-			while (this.workers.size() < 4)
+			this.setResult(null);
+
+			while (this.workers.size() < this.getConcurrency())
 			{
 				LoadWorker worker = this.newWorker();
+				worker.start();
 				workersReading.put(String.valueOf(worker.getId()), false);
 				this.workers.add(worker);
 				this.readyWorkers.add(worker);
-				worker.start();
 			}
 		}
 		finally
@@ -141,6 +148,7 @@ public class LoadMaster implements Runnable
 		try
 		{
 			this.workers.remove(worker);
+			this.readyWorkers.remove(worker);
 			this.untilEmptyWorkers.signalAll();
 		}
 		finally
@@ -156,8 +164,8 @@ public class LoadMaster implements Runnable
 		lock.lock();
 		try
 		{
-			this.result[0] += total;
-			this.result[1] += bads;
+			this.getResult()[0] += total;
+			this.getResult()[1] += bads;
 			this.readyWorkers.add(worker);
 			this.notEmptyWorkers.signalAll();
 			// log("Worker#" + worker.getId() + " reported loaded");
@@ -212,105 +220,118 @@ public class LoadMaster implements Runnable
 	{
 		try
 		{
-			this.initWorkers();
-		}
-		catch (Exception e)
-		{
-			e.printStackTrace();
-			return;
-		}
+			try
+			{
+				this.initWorkers();
+			}
+			catch (Exception e)
+			{
+				e.printStackTrace(this.getErr());
+				return;
+			}
 
-		LoadWorker worker = null;
-		lock.lock();
-		try
-		{
-			this.stopped = false;
-			this.reading = true;
-			worker = this.shiftWorker();
-		}
-		finally
-		{
-			lock.unlock();
-		}
-		// log("Worker#" + worker.getId() + " shifting");
-		worker.waitForStarted().wakeup();
-
-		while (true)
-		{
-			worker = null;
-
+			LoadWorker worker = null;
 			lock.lock();
 			try
 			{
-				// log("master waiting " + this.reading);
-				while (this.reading)
-				{
-					try
-					{
-						// block here
-						if (!notReading.await(10, TimeUnit.SECONDS))
-						{
-							log("master wait timeout");
-							String ids = "";
-							for (LoadWorker w : this.readyWorkers)
-							{
-								ids += w.getId() + " ";
-							}
-							log("ready: " + ids);
-							log("reading: " + new JSON().attrAll(this.workersReading).toString());
-						}
-					}
-					catch (InterruptedException e)
-					{
-					}
-				}
-				// log("master wakeup " + this.reading);
-
-				if (this.ended)
-				{
-					break;
-				}
-
+				this.stopped = false;
 				this.reading = true;
-
-				// log("master shifting " + this.reading);
+				this.setResult(new long[] { 0L, 0L });
 				worker = this.shiftWorker();
-				// log("master shifted " + this.reading + " " + worker.getId());
 			}
 			finally
 			{
 				lock.unlock();
 			}
+			// log("Worker#" + worker.getId() + " shifting");
+			// worker.waitForStarted().wakeup();
+			worker.wakeup();
 
-			// log("master waking up Worker#" + worker.getId());
-			worker.waitForStarted().wakeup(); // OK
-			// log("master waked up Worker#" + worker.getId());
-		}
-
-		log("Master stopping");
-		this.stop();
-
-		lock.lock();
-		try
-		{
-			while (!this.workers.isEmpty())
+			while (true)
 			{
+				worker = null;
+
+				lock.lock();
 				try
 				{
-					this.untilEmptyWorkers.await();
-				}
-				catch (InterruptedException e)
-				{
-				}
-			}
+					// log("master waiting " + this.reading);
+					while (this.reading)
+					{
+						try
+						{ // block here
+							if (!notReading.await(10, TimeUnit.SECONDS))
+							{
+								log("master wait timeout");
+								String ids = "";
+								for (LoadWorker w : this.readyWorkers)
+								{
+									ids += w.getId() + " ";
+								}
+								log("ready: " + ids);
+								log("reading: " + new JSON().attrAll(this.workersReading).toString());
+							}
+						}
+						catch (InterruptedException e)
+						{
+						}
+					}
+					// log("master wakeup " + this.reading);
 
-			this.stopped = true;
-			this.untilStopped.signalAll();
+					if (this.ended)
+					{
+						break;
+					}
+
+					this.reading = true;
+
+					// log("master shifting " + this.reading);
+					worker = this.shiftWorker();
+					// log("master shifted " + this.reading + " " +
+					// worker.getId());
+				}
+				finally
+				{
+					lock.unlock();
+				}
+
+				// log("master waking up Worker#" + worker.getId());
+				// worker.waitForStarted().wakeup(); // OK
+				worker.wakeup(); // OK
+				// log("master waked up Worker#" + worker.getId());
+			}
 		}
 		finally
 		{
-			lock.unlock();
+			log("Master stopping");
+			this.stop();
+
+			lock.lock();
+			try
+			{
+				while (!this.workers.isEmpty())
+				{
+					try
+					{
+						this.untilEmptyWorkers.await();
+					}
+					catch (InterruptedException e)
+					{
+					}
+				}
+				this.stopped = true;
+				this.untilStopped.signalAll();
+			}
+			finally
+			{
+				lock.unlock();
+			}
 		}
+	}
+
+	public LoadMaster setConcurrency(int concurrency)
+	{
+		this.concurrency = Math.max(concurrency, 1);
+		return this;
 	}
 
 	public LoadMaster setDataBase(ConnectionFactory dataBase)

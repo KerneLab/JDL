@@ -15,17 +15,17 @@ import org.kernelab.basis.Tools;
 
 public class LoadWorker implements Runnable
 {
-	private static int			ID				= 0;
+	private static int			ID			= 0;
 
-	private final int			id				= ID++;
+	private final int			id			= ID++;
 
-	protected final Lock		lock			= new ReentrantLock();
+	protected final Lock		lock		= new ReentrantLock();
 
-	protected final Condition	notStarted		= lock.newCondition();
+	protected final Condition	notStarted	= lock.newCondition();
 
-	protected final Condition	untilWaiting	= lock.newCondition();
+	// protected final Condition untilWaiting = lock.newCondition();
 
-	protected final Condition	untilWakeup		= lock.newCondition();
+	protected final Condition	untilWakeup	= lock.newCondition();
 
 	private LoadMaster			master;
 
@@ -33,21 +33,23 @@ public class LoadWorker implements Runnable
 
 	private Thread				thread;
 
-	private boolean				waiting			= false;
+	// private boolean waiting = false;
 
-	private boolean				stopping		= false;
+	private boolean				needWait	= true;
 
-	private boolean				started			= false;
+	private boolean				stopping	= false;
+
+	private boolean				started		= false;
 
 	private PreparedStatement	statement;
 
-	private LinkedList<Record>	records			= new LinkedList<Record>();
+	private LinkedList<Record>	records		= new LinkedList<Record>();
+
+	private int					batchSize	= 1000;
+
+	private LinkedList<Record>	bads		= new LinkedList<Record>();
 
 	// private boolean running = false;
-
-	private int					batchSize		= 1000;
-
-	private LinkedList<Record>	bads			= new LinkedList<Record>();
 
 	public LoadWorker(LoadMaster master, Connection conn)
 	{
@@ -250,6 +252,11 @@ public class LoadWorker implements Runnable
 		}
 	}
 
+	protected boolean isNeedWait()
+	{
+		return needWait;
+	}
+
 	protected boolean isStarted()
 	{
 		return started;
@@ -260,25 +267,25 @@ public class LoadWorker implements Runnable
 		return stopping;
 	}
 
+	protected void log(String log)
+	{
+		Tools.debug(log);
+	}
+
 	// protected boolean isRunning()
 	// {
 	// return running;
 	// }
 
-	protected boolean isWaiting()
-	{
-		return waiting;
-	}
+	// protected boolean isWaiting()
+	// {
+	// return waiting;
+	// }
 
 	// protected boolean isStopped()
 	// {
 	// return this.getThread() == null;
 	// }
-
-	protected void log(String log)
-	{
-		Tools.debug(log);
-	}
 
 	protected void logBad(Record record, Exception ex)
 	{
@@ -335,10 +342,10 @@ public class LoadWorker implements Runnable
 						notStarted.signalAll();
 					}
 
-					if (!this.isStopping())
+					while (!this.isStopping() && this.isNeedWait())
 					{
-						this.setWaiting(true);
-						untilWaiting.signalAll();
+						// this.setWaiting(true);
+						// untilWaiting.signalAll();
 						try
 						{
 							untilWakeup.await();
@@ -348,12 +355,14 @@ public class LoadWorker implements Runnable
 						}
 					}
 
-					this.setWaiting(false);
+					// this.setWaiting(false);
 
 					if (this.isStopping())
 					{
 						break;
 					}
+
+					this.setNeedWait(true);
 				}
 				finally
 				{
@@ -443,6 +452,12 @@ public class LoadWorker implements Runnable
 		return this;
 	}
 
+	protected LoadWorker setNeedWait(boolean needWait)
+	{
+		this.needWait = needWait;
+		return this;
+	}
+
 	protected LoadWorker setRecords(LinkedList<Record> records)
 	{
 		this.records = records;
@@ -478,15 +493,16 @@ public class LoadWorker implements Runnable
 		return this;
 	}
 
-	protected LoadWorker setWaiting(boolean waiting)
-	{
-		this.waiting = waiting;
-		return this;
-	}
+	// protected LoadWorker setWaiting(boolean waiting)
+	// {
+	// this.waiting = waiting;
+	// return this;
+	// }
 
 	public Thread start()
 	{
 		Thread t = null;
+
 		lock.lock();
 		try
 		{
@@ -502,7 +518,11 @@ public class LoadWorker implements Runnable
 		{
 			lock.unlock();
 		}
+
 		t.start();
+
+		this.waitForStarted();
+
 		return t;
 	}
 
@@ -511,11 +531,11 @@ public class LoadWorker implements Runnable
 		lock.lock();
 		try
 		{
-			Thread t = this.getThread();
-			if (t != null)
+			if (this.getThread() != null)
 			{
 				this.setStopping(true);
-				t.interrupt();
+				untilWakeup.signalAll();
+				// t.interrupt();
 				// while (!this.isWaiting())
 				// {
 				// try
@@ -596,24 +616,22 @@ public class LoadWorker implements Runnable
 		lock.lock();
 		try
 		{
-			Thread t = this.getThread();
-			if (t == null)
+			if (this.getThread() != null)
 			{
-				return;
-			}
+				// while (!this.isStopping() && !this.isWaiting())
+				// {
+				// try
+				// {
+				// untilWaiting.await();
+				// }
+				// catch (InterruptedException e)
+				// {
+				// }
+				// }
 
-			while (!this.isStopping() && !this.isWaiting())
-			{
-				try
-				{
-					untilWaiting.await();
-				}
-				catch (InterruptedException e)
-				{
-				}
+				this.setNeedWait(false);
+				untilWakeup.signalAll();
 			}
-
-			untilWakeup.signalAll();
 		}
 		finally
 		{
