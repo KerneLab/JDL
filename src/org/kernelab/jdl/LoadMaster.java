@@ -27,6 +27,8 @@ public class LoadMaster implements Runnable
 
 	private int						concurrency			= 1;
 
+	private int						batchSize			= CommandClient.DEFAULT_BATCH_SIZE;
+
 	private long[]					result				= null;
 
 	protected final Lock			lock				= new ReentrantLock();
@@ -54,6 +56,11 @@ public class LoadMaster implements Runnable
 	private PrintWriter				out					= new PrintWriter(CommandClient.writerOf(System.out), true);
 
 	private PrintWriter				err					= new PrintWriter(CommandClient.writerOf(System.err), true);
+
+	public int getBatchSize()
+	{
+		return batchSize;
+	}
 
 	public int getConcurrency()
 	{
@@ -137,12 +144,17 @@ public class LoadMaster implements Runnable
 
 	protected LoadWorker newWorker() throws Exception
 	{
-		return new LoadWorker(this, newConnection());
+		return new LoadWorker(this, newConnection()).setBatchSize(this.getBatchSize());
+	}
+
+	protected void printError(Throwable err)
+	{
+		CommandClient.printError(this.getErr(), err);
 	}
 
 	protected void reportDestroy(LoadWorker worker)
 	{
-		log("Worker#" + worker.getId() + " destroy");
+		// log("Worker#" + worker.getId() + " destroy");
 
 		lock.lock();
 		try
@@ -226,7 +238,7 @@ public class LoadMaster implements Runnable
 			}
 			catch (Exception e)
 			{
-				e.printStackTrace(this.getErr());
+				this.printError(e);
 				return;
 			}
 
@@ -302,7 +314,7 @@ public class LoadMaster implements Runnable
 		}
 		finally
 		{
-			log("Master stopping");
+			// log("Master stopping");
 			this.stop();
 
 			lock.lock();
@@ -328,6 +340,12 @@ public class LoadMaster implements Runnable
 		}
 	}
 
+	public LoadMaster setBatchSize(int batchSize)
+	{
+		this.batchSize = Math.max(batchSize, 1);
+		return this;
+	}
+
 	public LoadMaster setConcurrency(int concurrency)
 	{
 		this.concurrency = Math.max(concurrency, 1);
@@ -340,13 +358,13 @@ public class LoadMaster implements Runnable
 		return this;
 	}
 
-	protected LoadMaster setErr(PrintWriter err)
+	public LoadMaster setErr(PrintWriter err)
 	{
 		this.err = err;
 		return this;
 	}
 
-	protected LoadMaster setOut(PrintWriter out)
+	public LoadMaster setOut(PrintWriter out)
 	{
 		this.out = out;
 		return this;

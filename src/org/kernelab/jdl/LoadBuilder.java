@@ -88,7 +88,7 @@ public class LoadBuilder
 	{
 		Map<String, String> map = new LinkedHashMap<String, String>();
 
-		String regex = "(?:\\s*,\\s*|^\\s*)([^=]+?)\\s*?=";
+		String regex = "(?:\\s*,\\s*|^\\s*)([^,=]+?)\\s*?=";
 		Matcher m = Pattern.compile(regex, Pattern.CASE_INSENSITIVE).matcher(setList);
 
 		String lastKey = null;
@@ -206,7 +206,9 @@ public class LoadBuilder
 		this.setCharset(charset);
 		log("charset: " + charset);
 
-		res = extract(res[0], "^\\s*(?:FIELDS|COLUMNS)\\s+TERMINATED\\s+BY\\s+(.+?')\\s+(?:(?=LINES\\s+)|$)", "$1");
+		res = extract(res[0],
+				"^\\s*(?:FIELDS|COLUMNS)\\s+TERMINATED\\s+BY\\s+(.+?')\\s+(?:(?=LINES\\s+)|(?=IGNORE\\s+)|(?=[(])|$)",
+				"$1");
 		String colSplit = restoreText(res[1]);
 		if (colSplit == null)
 		{
@@ -215,12 +217,12 @@ public class LoadBuilder
 		this.setColumnTerminator(colSplit);
 		log("colsSplit: " + colSplit);
 
-		res = extract(res[0], "^\\s*(?:LINES|ROWS)\\s+TERMINATED\\s+BY\\s+(.+?')\\s+(?:(?=[(])|(?=IGNORE\\s+)|$)",
+		res = extract(res[0], "^\\s*(?:LINES|ROWS)\\s+TERMINATED\\s+BY\\s+(.+?')\\s+(?:(?=IGNORE\\s+)|(?=[(])|$)",
 				"$1");
 		String recSplit = restoreText(res[1]);
 		if (recSplit == null)
 		{
-			throw new IllegalArgumentException("Record terminator not given in command: " + cmd);
+			recSplit = "\n";
 		}
 		this.setRecordTerminator(recSplit);
 		log("recSplit: " + recSplit);

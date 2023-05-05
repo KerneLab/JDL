@@ -31,6 +31,8 @@ public class LoadWorker implements Runnable
 
 	private Connection			connection;
 
+	private int					batchSize	= CommandClient.DEFAULT_BATCH_SIZE;
+
 	private Thread				thread;
 
 	// private boolean waiting = false;
@@ -44,8 +46,6 @@ public class LoadWorker implements Runnable
 	private PreparedStatement	statement;
 
 	private LinkedList<Record>	records		= new LinkedList<Record>();
-
-	private int					batchSize	= 1000;
 
 	private LinkedList<Record>	bads		= new LinkedList<Record>();
 
@@ -102,7 +102,6 @@ public class LoadWorker implements Runnable
 		try
 		{
 			master = this.getMaster();
-			this.setMaster(null);
 			this.setStatement(null);
 			try
 			{
@@ -115,6 +114,7 @@ public class LoadWorker implements Runnable
 			this.getRecords().clear();
 			this.getBads().clear();
 			this.setThread(null);
+			this.setMaster(null);
 		}
 		finally
 		{
@@ -155,13 +155,18 @@ public class LoadWorker implements Runnable
 			}
 			catch (SQLException ex)
 			{
-				ex.printStackTrace();
+				printError(ex);
 			}
 			return this.checkResult(e.getUpdateCounts(), records, this.getBads());
 		}
 		catch (SQLException e)
 		{
-			e.printStackTrace();
+			printError(e);
+			return new int[] { total, total };
+		}
+		catch (Throwable e)
+		{
+			printError(e);
 			return new int[] { total, total };
 		}
 	}
@@ -272,6 +277,11 @@ public class LoadWorker implements Runnable
 		Tools.debug(log);
 	}
 
+	protected void logBad(Record record, Exception ex)
+	{
+		record.printError(this.getMaster().getErr(), ex);
+	}
+
 	// protected boolean isRunning()
 	// {
 	// return running;
@@ -287,9 +297,9 @@ public class LoadWorker implements Runnable
 	// return this.getThread() == null;
 	// }
 
-	protected void logBad(Record record, Exception ex)
+	protected void printError(Throwable err)
 	{
-		record.printError(this.getMaster().getErr(), ex);
+		this.getMaster().printError(err);
 	}
 
 	protected int readRecords(RecordParser parser, List<Record> records)
@@ -297,17 +307,18 @@ public class LoadWorker implements Runnable
 		int bads = 0;
 		records.clear();
 		Record record = null;
-		int need = this.getTemplate().getItems().length;
-		for (int i = 0; i < this.getBatchSize(); i++)
+		int needCols = this.getTemplate().getItems().length;
+		int batchSize = this.getBatchSize();
+		for (int i = 0; i < batchSize; i++)
 		{
 			if (parser.hasNext())
 			{
 				record = parser.next();
-				if (record.data.length != need)
+				if (record.data.length != needCols)
 				{
 					bads++;
 					this.logBad(record,
-							new SQLException(record.data.length + " columns found but need " + need + " to load"));
+							new SQLException(record.data.length + " columns found but need " + needCols + " to load"));
 				}
 				else
 				{
@@ -416,7 +427,7 @@ public class LoadWorker implements Runnable
 		}
 		catch (SQLException ex)
 		{
-			ex.printStackTrace();
+			printError(ex);
 		}
 		finally
 		{
@@ -557,12 +568,10 @@ public class LoadWorker implements Runnable
 
 	protected int trackBads(Connection conn, PreparedStatement ps, int[] index, LinkedList<Record> bads)
 	{
-		int total = bads.size();
+		int total = bads.size(), good = 0;
 		try
 		{
 			conn.setAutoCommit(true);
-
-			int bad = 0;
 
 			Record rec = null;
 			while (!bads.isEmpty())
@@ -571,20 +580,24 @@ public class LoadWorker implements Runnable
 				try
 				{
 					this.addUpdate(ps, index, rec.data);
+					good++;
 				}
 				catch (SQLException err)
 				{
-					bad++;
 					this.logBad(rec, err);
 				}
 			}
-
-			return bad;
+			return total - good;
 		}
 		catch (SQLException e)
 		{
-			e.printStackTrace();
-			return total;
+			printError(e);
+			return total - good;
+		}
+		catch (Throwable e)
+		{
+			printError(e);
+			return total - good;
 		}
 	}
 

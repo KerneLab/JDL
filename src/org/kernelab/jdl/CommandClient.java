@@ -31,7 +31,28 @@ import org.kernelab.basis.sql.SQLKit;
 
 public class CommandClient
 {
-	public static final String DEFAULT_HINT = "SQL>";
+	public static final String	DEFAULT_HINT		= "SQL>";
+
+	public static final int		DEFAULT_BATCH_SIZE	= 500;
+
+	public static String composeErrorText(Throwable err)
+	{
+		StringBuilder buf = new StringBuilder(
+				"\nErrorCatch: " + err.getClass().getName() + ": " + err.getLocalizedMessage());
+
+		int i = 0;
+		for (StackTraceElement trace : err.getStackTrace())
+		{
+			buf.append("\n\tat " + trace);
+			i++;
+			if (i >= 20)
+			{
+				break;
+			}
+		}
+
+		return buf.toString();
+	}
 
 	public static void main(String[] args)
 	{
@@ -39,9 +60,9 @@ public class CommandClient
 		{
 			System.exit(newInstance(args).interact() ? 0 : 1);
 		}
-		catch (IOException e)
+		catch (Throwable e)
 		{
-			e.printStackTrace();
+			printError(printerOf(System.err), e);
 			System.exit(1);
 		}
 	}
@@ -51,9 +72,24 @@ public class CommandClient
 		Entrance entr = new Entrance().handle(args);
 		return new CommandClient() //
 				.setDataBase(entr.parameter("url"), entr.parameter("usr"), entr.parameter("pwd")) //
+				.setBatchSize(Variable.asInteger(entr.parameter("batchSize"), DEFAULT_BATCH_SIZE)) //
 				.setConcurrency(Variable.asInteger(entr.parameter("conc"), 0)) //
 				.setHint(entr.parameter("hint")) //
 		;
+	}
+
+	public static PrintWriter printerOf(OutputStream os)
+	{
+		return new PrintWriter(writerOf(os), true);
+	}
+
+	public static void printError(PrintWriter out, Throwable err)
+	{
+		if (out == null || err == null)
+		{
+			return;
+		}
+		out.println(composeErrorText(err));
 	}
 
 	public static Reader readerOf(InputStream is)
@@ -143,23 +179,21 @@ public class CommandClient
 		return new OutputStreamWriter(os, Charset.defaultCharset());
 	}
 
-	private PrintWriter			out		= new PrintWriter(writerOf(System.out), true);
+	private PrintWriter			out			= new PrintWriter(writerOf(System.out), true);
 
-	private PrintWriter			err		= new PrintWriter(writerOf(System.err), true);
+	private PrintWriter			err			= new PrintWriter(writerOf(System.err), true);
 
-	private int					conc	= 1;
+	private int					conc		= 1;
 
-	private String				url;
-
-	private String				username;
-
-	private String				password;
+	private int					batchSize	= DEFAULT_BATCH_SIZE;
 
 	private ConnectionFactory	dataBase;
 
-	private String				hint	= DEFAULT_HINT;
+	private Connection			connection;
 
-	private boolean				exit	= false;
+	private String				hint		= DEFAULT_HINT;
+
+	private boolean				exit		= false;
 
 	public boolean execute(String cmd)
 	{
@@ -182,19 +216,20 @@ public class CommandClient
 
 			return true;
 		}
-		catch (Exception e)
+		catch (Throwable e)
 		{
-			e.printStackTrace(this.getErr());
+			this.printError(e);
 			return false;
 		}
 	}
 
-	protected boolean executeLoadData(String cmd) throws IOException
+	protected boolean executeLoadData(String cmd) throws Exception
 	{
 		LoadBuilder build = new LoadBuilder().resolve(cmd);
 
 		LoadMaster master = new LoadMaster() //
 				.setConcurrency(this.getConcurrency())//
+				.setBatchSize(this.getBatchSize()) //
 				.setDataBase(this.getDataBase()) //
 				.setParser(build.buildParser()) //
 				.setTemplate(build.buildTemplate()) //
@@ -227,60 +262,66 @@ public class CommandClient
 
 	protected Object executeSQL(String sql) throws SQLException
 	{
-		Connection conn = null;
+		Connection conn = this.getConnection();
+		conn.setAutoCommit(true);
+
+		Statement stmt = null;
 		try
 		{
-			conn = this.newConnection();
-			conn.setAutoCommit(true);
+			stmt = conn.createStatement();
 
-			Statement stmt = null;
-			try
+			if (stmt.execute(sql))
 			{
-				stmt = conn.createStatement();
-
-				if (stmt.execute(sql))
-				{
-					return resultSetToJSAN(stmt.getResultSet());
-				}
-				else
-				{
-					return stmt.getUpdateCount();
-				}
+				return resultSetToJSAN(stmt.getResultSet());
 			}
-			finally
+			else
 			{
-				if (stmt != null)
-				{
-					try
-					{
-						stmt.close();
-					}
-					catch (Exception e)
-					{
-						e.printStackTrace(this.getErr());
-					}
-				}
+				return stmt.getUpdateCount();
 			}
 		}
 		finally
 		{
-			if (conn != null)
+			if (stmt != null)
 			{
 				try
 				{
-					conn.close();
+					stmt.close();
 				}
 				catch (Exception e)
 				{
-					e.printStackTrace(this.getErr());
+					printError(e);
 				}
 			}
 		}
 	}
 
+	protected int getBatchSize()
+	{
+		return batchSize;
+	}
+
 	protected int getConcurrency()
 	{
 		return conc;
+	}
+
+	protected Connection getConnection() throws SQLException
+	{
+		if (connection == null || !connection.isValid(5))
+		{
+			if (connection != null)
+			{
+				try
+				{
+					connection.close();
+				}
+				catch (SQLException e)
+				{
+				}
+			}
+			connection = this.newConnection();
+		}
+		return connection;
 	}
 
 	protected ConnectionFactory getDataBase()
@@ -315,22 +356,7 @@ public class CommandClient
 		return out;
 	}
 
-	public String getPassword()
-	{
-		return password;
-	}
-
-	public String getUrl()
-	{
-		return url;
-	}
-
-	public String getUsername()
-	{
-		return username;
-	}
-
-	public boolean interact() throws IOException
+	public boolean interact()
 	{
 		List<String> lines = new LinkedList<String>();
 
@@ -421,7 +447,7 @@ public class CommandClient
 		return this.getDataBase().newConnection();
 	}
 
-	public void output(Object msg, boolean wrapLine)
+	protected void output(Object msg, boolean wrapLine)
 	{
 		if (this.getOut() != null)
 		{
@@ -491,13 +517,24 @@ public class CommandClient
 		}
 	}
 
+	protected void printError(Throwable err)
+	{
+		printError(this.getErr(), err);
+	}
+
+	protected CommandClient setBatchSize(int batchSize)
+	{
+		this.batchSize = batchSize;
+		return this;
+	}
+
 	protected CommandClient setConcurrency(int conc)
 	{
 		this.conc = conc;
 		return this;
 	}
 
-	protected CommandClient setDataBase(ConnectionFactory db)
+	public CommandClient setDataBase(ConnectionFactory db)
 	{
 		this.dataBase = db;
 		return this;
@@ -505,11 +542,10 @@ public class CommandClient
 
 	public CommandClient setDataBase(String url, String username, String password)
 	{
-		return this.setUrl(url).setUsername(username).setPassword(password)
-				.setDataBase(new ConnectionFactory(url, username, password));
+		return this.setDataBase(new ConnectionFactory(url, username, password));
 	}
 
-	protected CommandClient setErr(PrintWriter err)
+	public CommandClient setErr(PrintWriter err)
 	{
 		this.err = err;
 		return this;
@@ -527,27 +563,9 @@ public class CommandClient
 		return this;
 	}
 
-	protected CommandClient setOut(PrintWriter output)
+	public CommandClient setOut(PrintWriter output)
 	{
 		this.out = output;
-		return this;
-	}
-
-	protected CommandClient setPassword(String password)
-	{
-		this.password = password;
-		return this;
-	}
-
-	protected CommandClient setUrl(String url)
-	{
-		this.url = url;
-		return this;
-	}
-
-	protected CommandClient setUsername(String username)
-	{
-		this.username = username;
 		return this;
 	}
 }
