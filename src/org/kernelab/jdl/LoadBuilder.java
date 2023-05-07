@@ -80,12 +80,18 @@ public class LoadBuilder
 				.setReader(new InputStreamReader(is, this.getCharset())) //
 				.setColumnTerminator(this.getColumnTerminator()) //
 				.setRecordTerminator(this.getRecordTerminator()) //
+				.setColumnsNeed(this.getItemList().length) //
 				.setSkip(this.getSkip() != null ? this.getSkip() : 0) //
 		;
 	}
 
 	protected Map<String, String> buildSetMap(String setList)
 	{
+		if (setList == null)
+		{
+			return null;
+		}
+
 		Map<String, String> map = new LinkedHashMap<String, String>();
 
 		String regex = "(?:\\s*,\\s*|^\\s*)([^,=]+?)\\s*?=";
@@ -119,7 +125,7 @@ public class LoadBuilder
 
 	protected String[] extract(String cmd, String regex, String replace)
 	{
-		Matcher m = Pattern.compile(regex, Pattern.CASE_INSENSITIVE).matcher(cmd);
+		Matcher m = Pattern.compile(regex, Pattern.CASE_INSENSITIVE | Pattern.DOTALL).matcher(cmd);
 
 		if (!m.find())
 		{
@@ -207,7 +213,7 @@ public class LoadBuilder
 		log("charset: " + charset);
 
 		res = extract(res[0],
-				"^\\s*(?:FIELDS|COLUMNS)\\s+TERMINATED\\s+BY\\s+(.+?')\\s+(?:(?=LINES\\s+)|(?=IGNORE\\s+)|(?=[(])|$)",
+				"^\\s*(?:FIELDS|COLUMNS)\\s+TERMINATED\\s+BY\\s+(.+?')\\s+(?:(?=(?:LINES|ROWS)\\s+|IGNORE\\s+|[(])|$)",
 				"$1");
 		String colSplit = restoreText(res[1]);
 		if (colSplit == null)
@@ -217,8 +223,7 @@ public class LoadBuilder
 		this.setColumnTerminator(colSplit);
 		log("colsSplit: " + colSplit);
 
-		res = extract(res[0], "^\\s*(?:LINES|ROWS)\\s+TERMINATED\\s+BY\\s+(.+?')\\s+(?:(?=IGNORE\\s+)|(?=[(])|$)",
-				"$1");
+		res = extract(res[0], "^\\s*(?:LINES|ROWS)\\s+TERMINATED\\s+BY\\s+(.+?')\\s+(?:(?=IGNORE\\s+|[(])|$)", "$1");
 		String recSplit = restoreText(res[1]);
 		if (recSplit == null)
 		{
@@ -246,7 +251,7 @@ public class LoadBuilder
 		String setList = res[1];
 		Map<String, String> setMap = this.buildSetMap(setList);
 		this.setSetMap(setMap);
-		log("setMap: " + new JSON().attrAll(setMap).toString());
+		log("setMap: " + new JSON().attrAll(setMap == null ? new JSON() : setMap).toString());
 
 		return this;
 	}

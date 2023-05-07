@@ -40,9 +40,12 @@ public class InsertBuilder
 			}
 		}
 
-		for (Entry<String, String> pair : this.getSetExprs().entrySet())
+		if (this.getSetExprs() != null)
 		{
-			map.put(pair.getKey(), pair.getValue());
+			for (Entry<String, String> pair : this.getSetExprs().entrySet())
+			{
+				map.put(pair.getKey(), pair.getValue());
+			}
 		}
 
 		List<Integer> idx = new LinkedList<Integer>();
@@ -83,7 +86,8 @@ public class InsertBuilder
 				.setItems(this.getLoadItems()) //
 				.setInsert("INSERT INTO " + this.getTable() + " (" + cols.toString() + ")" //
 						+ " VALUES (" + vals.toString() + ")") //
-				.setIndexes(idx);
+				.setIndexes(idx) //
+		;
 	}
 
 	protected Object[] findVarsIndex(String expr, Map<Integer, Pattern> vars)
