@@ -38,25 +38,27 @@ public class RecordParser implements Iterator<Record>
 
 	private char[]			columnTerminator;
 
-	private int				skip	= 0;
+	private int				skip		= 0;
+
+	private int				columnsNeed	= -1;
 
 	private Reader			reader;
 
-	private char[]			buff	= new char[1000];
+	private char[]			buff		= new char[1000];
 
-	private List<String>	columns	= new LinkedList<String>();
+	private List<String>	cols		= new LinkedList<String>();
 
-	private StringBuilder	cell	= new StringBuilder();
+	private StringBuilder	cell		= new StringBuilder();
 
-	private int				len		= 0;
+	private int				len			= 0;
 
-	private int				pos		= 0;
+	private int				pos			= 0;
 
-	private boolean			begin	= false;
+	private boolean			begin		= false;
 
-	private Record			next	= null;
+	private Record			next		= null;
 
-	private long			id		= 1;
+	private long			id			= 1;
 
 	protected void close()
 	{
@@ -72,6 +74,11 @@ public class RecordParser implements Iterator<Record>
 	protected char[] getBuff()
 	{
 		return buff;
+	}
+
+	public int getColumnsNeed()
+	{
+		return columnsNeed;
 	}
 
 	protected char[] getColumnTerminator()
@@ -146,10 +153,10 @@ public class RecordParser implements Iterator<Record>
 
 	protected Record nextRecord() throws IOException
 	{
-		columns.clear();
+		cols.clear();
 		char[] colTerm = this.getColumnTerminator(), recTerm = this.getRecordTerminator();
-		boolean colTermed = false, recTermed = false, iterated = false;
-		int reads = -1;
+		int reads = -1, columns = this.getColumnsNeed();
+		boolean colTermed = false, recTermed = false, iterated = false, needCols = columns != 0;
 
 		while (true)
 		{
@@ -194,7 +201,10 @@ public class RecordParser implements Iterator<Record>
 				}
 			}
 
-			cell.append(buff, 0, pos);
+			if (needCols)
+			{
+				cell.append(buff, 0, pos);
+			}
 
 			if (colTermed)
 			{
@@ -211,20 +221,34 @@ public class RecordParser implements Iterator<Record>
 
 			if (colTermed)
 			{
-				columns.add(cell.toString());
-				Tools.clearStringBuilder(cell);
+				if (needCols)
+				{
+					cols.add(cell.toString());
+					Tools.clearStringBuilder(cell);
+					if (columns > 0 && cols.size() >= columns)
+					{
+						needCols = false;
+					}
+				}
 			}
 			else if (recTermed || (reads == -1 && pos >= len))
 			{
-				columns.add(cell.toString());
-				Tools.clearStringBuilder(cell);
+				if (needCols)
+				{
+					cols.add(cell.toString());
+					Tools.clearStringBuilder(cell);
+					if (columns > 0 && cols.size() >= columns)
+					{
+						needCols = false;
+					}
+				}
 				break;
 			}
 		}
 
 		if (recTermed)
 		{
-			return newRecord(columns.toArray(new String[columns.size()]));
+			return newRecord(cols.toArray(new String[cols.size()]));
 		}
 		else
 		{
@@ -232,7 +256,7 @@ public class RecordParser implements Iterator<Record>
 			{
 				if (iterated)
 				{
-					return newRecord(columns.toArray(new String[columns.size()]));
+					return newRecord(cols.toArray(new String[cols.size()]));
 				}
 				else
 				{
@@ -254,6 +278,12 @@ public class RecordParser implements Iterator<Record>
 	protected void setBuff(char[] buff)
 	{
 		this.buff = buff;
+	}
+
+	public RecordParser setColumnsNeed(int columns)
+	{
+		this.columnsNeed = columns;
+		return this;
 	}
 
 	public RecordParser setColumnTerminator(String columnTerminator)
