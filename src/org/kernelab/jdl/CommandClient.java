@@ -33,6 +33,8 @@ public class CommandClient
 {
 	public static final String	DEFAULT_HINT		= "SQL>";
 
+	public static final String	DEFAULT_DELIMITER	= ";";
+
 	public static final int		DEFAULT_BATCH_SIZE	= 500;
 
 	public static String composeErrorText(Throwable err)
@@ -74,6 +76,9 @@ public class CommandClient
 				.setDataBase(entr.parameter("url"), entr.parameter("usr"), entr.parameter("pwd")) //
 				.setBatchSize(Variable.asInteger(entr.parameter("batchSize"), DEFAULT_BATCH_SIZE)) //
 				.setConcurrency(Variable.asInteger(entr.parameter("conc"), 0)) //
+				.setAutoCommit(!"false".equalsIgnoreCase(entr.parameter("autoCommit"))) //
+				.setIgnoreError("true".equalsIgnoreCase(entr.parameter("ignoreError"))) //
+				.setUseRawCmd("true".equalsIgnoreCase(entr.parameter("useRawCmd"))) //
 				.setHint(entr.parameter("hint")) //
 		;
 	}
@@ -191,7 +196,15 @@ public class CommandClient
 
 	private Connection			connection;
 
+	private String				delimiter	= DEFAULT_DELIMITER;
+
 	private String				hint		= DEFAULT_HINT;
+
+	private boolean				autoCommit	= true;
+
+	private boolean				ignoreError	= false;
+
+	private boolean				useRawCmd	= false;
 
 	private boolean				exit		= false;
 
@@ -199,16 +212,28 @@ public class CommandClient
 	{
 		try
 		{
-			if (cmd.trim().equalsIgnoreCase("exit"))
+			cmd = cmd.trim();
+			if (cmd.equalsIgnoreCase("EXIT"))
 			{
 				this.exit = true;
 			}
-			else if (cmd.matches("(?is)^\\s*LOAD\\s+DATA\\s+.+$"))
+			else if (cmd.equalsIgnoreCase("COMMIT"))
 			{
-				return this.executeLoadData(cmd);
+				this.getConnection().commit();
+			}
+			else if (cmd.equalsIgnoreCase("ROLLBACK"))
+			{
+				this.getConnection().rollback();
 			}
 			else
 			{
+				if (!this.isUseRawCmd())
+				{
+					if (cmd.matches("(?is)^\\s*LOAD\\s+DATA\\s+LOCAL\\s+INFILE\\s+.+$"))
+					{
+						return this.executeLoadData(cmd);
+					}
+				}
 				Object res = executeSQL(cmd);
 				output(res, 0, "  ");
 				this.getOut().println();
@@ -263,7 +288,6 @@ public class CommandClient
 	protected Object executeSQL(String sql) throws SQLException
 	{
 		Connection conn = this.getConnection();
-		conn.setAutoCommit(true);
 
 		Statement stmt = null;
 		try
@@ -307,6 +331,11 @@ public class CommandClient
 
 	protected Connection getConnection() throws SQLException
 	{
+		return getConnection(true);
+	}
+
+	protected Connection getConnection(boolean newIfNull) throws SQLException
+	{
 		if (connection == null || !connection.isValid(5))
 		{
 			if (connection != null)
@@ -318,8 +347,13 @@ public class CommandClient
 				catch (SQLException e)
 				{
 				}
+				connection = null;
 			}
-			connection = this.newConnection();
+			if (newIfNull)
+			{
+				connection = this.newConnection();
+				connection.setAutoCommit(this.isAutoCommit());
+			}
 		}
 		return connection;
 	}
@@ -327,6 +361,11 @@ public class CommandClient
 	protected ConnectionFactory getDataBase()
 	{
 		return dataBase;
+	}
+
+	protected String getDelimiter()
+	{
+		return delimiter;
 	}
 
 	protected PrintWriter getErr()
@@ -359,7 +398,7 @@ public class CommandClient
 	public boolean interact()
 	{
 		List<String> lines = new LinkedList<String>();
-
+		boolean suc = true;
 		Scanner input = null;
 		try
 		{
@@ -389,21 +428,29 @@ public class CommandClient
 					break;
 				}
 
-				lines.add(line);
-
-				if (line.matches("^.*\\s*;\\s*$"))
+				if (line.matches("(?i)^DELIMITER\\b(.*)$"))
 				{
-					try
+					this.setDelimiter(line.replaceFirst("(?i)^DELIMITER\\b(.*)$", "$1"));
+				}
+				else
+				{
+					lines.add(line);
+					if (line.matches("^.*\\s*\\Q" + this.getDelimiter() + "\\E\\s*$"))
 					{
-						String cmd = Tools.jointStrings("\n", lines).replaceFirst("(?is)^(.+)\\s*?;\\s*$", "$1");
-						if (!execute(cmd))
+						try
 						{
-							return false;
+							String cmd = Tools.jointStrings("\n", lines)
+									.replaceFirst("(?s)^(.+)\\s*?\\Q" + this.getDelimiter() + "\\E\\s*$", "$1");
+							suc &= execute(cmd);
+							if (!suc && !this.isIgnoreError())
+							{
+								return false;
+							}
 						}
-					}
-					finally
-					{
-						lines.clear();
+						finally
+						{
+							lines.clear();
+						}
 					}
 				}
 
@@ -420,9 +467,32 @@ public class CommandClient
 			{
 				input.close();
 			}
+			Connection conn = null;
+			try
+			{
+				conn = this.getConnection(false);
+				if (conn != null && !this.isAutoCommit())
+				{
+					conn.rollback();
+				}
+			}
+			catch (SQLException e)
+			{
+				printError(e);
+			}
+			if (conn != null)
+			{
+				try
+				{
+					conn.close();
+				}
+				catch (SQLException e)
+				{
+				}
+			}
 		}
 
-		return true;
+		return suc;
 	}
 
 	protected boolean isAllPrimaryData(JSON json)
@@ -437,9 +507,24 @@ public class CommandClient
 		return true;
 	}
 
+	public boolean isAutoCommit()
+	{
+		return autoCommit;
+	}
+
 	protected boolean isExit()
 	{
 		return exit;
+	}
+
+	public boolean isIgnoreError()
+	{
+		return ignoreError;
+	}
+
+	public boolean isUseRawCmd()
+	{
+		return useRawCmd;
 	}
 
 	protected Connection newConnection() throws SQLException
@@ -522,6 +607,12 @@ public class CommandClient
 		printError(this.getErr(), err);
 	}
 
+	public CommandClient setAutoCommit(boolean autoCommit)
+	{
+		this.autoCommit = autoCommit;
+		return this;
+	}
+
 	protected CommandClient setBatchSize(int batchSize)
 	{
 		this.batchSize = batchSize;
@@ -545,6 +636,12 @@ public class CommandClient
 		return this.setDataBase(new ConnectionFactory(url, username, password));
 	}
 
+	protected CommandClient setDelimiter(String delimiter)
+	{
+		this.delimiter = Tools.isNullOrWhite(delimiter) ? DEFAULT_DELIMITER : delimiter.trim();
+		return this;
+	}
+
 	public CommandClient setErr(PrintWriter err)
 	{
 		this.err = err;
@@ -563,9 +660,21 @@ public class CommandClient
 		return this;
 	}
 
+	public CommandClient setIgnoreError(boolean ignore)
+	{
+		this.ignoreError = ignore;
+		return this;
+	}
+
 	public CommandClient setOut(PrintWriter output)
 	{
 		this.out = output;
+		return this;
+	}
+
+	public CommandClient setUseRawCmd(boolean rawcmd)
+	{
+		this.useRawCmd = rawcmd;
 		return this;
 	}
 }
