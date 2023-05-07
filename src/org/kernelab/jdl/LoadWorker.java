@@ -314,15 +314,15 @@ public class LoadWorker implements Runnable
 			if (parser.hasNext())
 			{
 				record = parser.next();
-				if (record.data.length != needCols)
+				if (needCols <= record.data.length)
+				{
+					records.add(record);
+				}
+				else
 				{
 					bads++;
 					this.logBad(record,
 							new SQLException(record.data.length + " columns found but need " + needCols + " to load"));
-				}
-				else
-				{
-					records.add(record);
 				}
 			}
 			else
