@@ -25,10 +25,6 @@ public class LoadMaster implements Runnable
 
 	private ConnectionFactory		dataBase;
 
-	private int						concurrency			= 1;
-
-	private int						batchSize			= CommandClient.DEFAULT_BATCH_SIZE;
-
 	private long[]					result				= null;
 
 	protected final Lock			lock				= new ReentrantLock();
@@ -56,6 +52,12 @@ public class LoadMaster implements Runnable
 	private PrintWriter				out					= new PrintWriter(CommandClient.writerOf(System.out), true);
 
 	private PrintWriter				err					= new PrintWriter(CommandClient.writerOf(System.err), true);
+
+	private int						concurrency			= 1;
+
+	private int						batchSize			= CommandClient.DEFAULT_BATCH_SIZE;
+
+	private boolean					rewriteBatch		= CommandClient.DEFAULT_REWRITE_BATCH;
 
 	public int getBatchSize()
 	{
@@ -119,6 +121,11 @@ public class LoadMaster implements Runnable
 		}
 	}
 
+	public boolean isRewriteBatch()
+	{
+		return rewriteBatch;
+	}
+
 	public boolean isStopping()
 	{
 		lock.lock();
@@ -144,7 +151,7 @@ public class LoadMaster implements Runnable
 
 	protected LoadWorker newWorker() throws Exception
 	{
-		return new LoadWorker(this, newConnection()).setBatchSize(this.getBatchSize());
+		return new LoadWorker(this, newConnection());
 	}
 
 	protected void printError(Throwable err)
@@ -379,6 +386,12 @@ public class LoadMaster implements Runnable
 	protected LoadMaster setResult(long[] result)
 	{
 		this.result = result;
+		return this;
+	}
+
+	public LoadMaster setRewriteBatch(boolean rewriteInsert)
+	{
+		this.rewriteBatch = rewriteInsert;
 		return this;
 	}
 

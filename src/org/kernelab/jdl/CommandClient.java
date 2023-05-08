@@ -31,11 +31,13 @@ import org.kernelab.basis.sql.SQLKit;
 
 public class CommandClient
 {
-	public static final String	DEFAULT_HINT		= "SQL>";
+	public static final String	DEFAULT_HINT			= "SQL>";
 
-	public static final String	DEFAULT_DELIMITER	= ";";
+	public static final String	DEFAULT_DELIMITER		= ";";
 
-	public static final int		DEFAULT_BATCH_SIZE	= 500;
+	public static final int		DEFAULT_BATCH_SIZE		= 500;
+
+	public static final boolean	DEFAULT_REWRITE_BATCH	= false;
 
 	public static String composeErrorText(Throwable err)
 	{
@@ -75,6 +77,7 @@ public class CommandClient
 		return new CommandClient() //
 				.setDataBase(entr.parameter("url"), entr.parameter("usr"), entr.parameter("pwd")) //
 				.setBatchSize(Variable.asInteger(entr.parameter("batchSize"), DEFAULT_BATCH_SIZE)) //
+				.setRewriteBatch("true".equalsIgnoreCase(entr.parameter("rewriteBatch"))) //
 				.setConcurrency(Variable.asInteger(entr.parameter("conc"), 0)) //
 				.setAutoCommit(!"false".equalsIgnoreCase(entr.parameter("autoCommit"))) //
 				.setIgnoreError("true".equalsIgnoreCase(entr.parameter("ignoreError"))) //
@@ -184,29 +187,31 @@ public class CommandClient
 		return new OutputStreamWriter(os, Charset.defaultCharset());
 	}
 
-	private PrintWriter			out			= new PrintWriter(writerOf(System.out), true);
+	private PrintWriter			out				= new PrintWriter(writerOf(System.out), true);
 
-	private PrintWriter			err			= new PrintWriter(writerOf(System.err), true);
+	private PrintWriter			err				= new PrintWriter(writerOf(System.err), true);
 
-	private int					conc		= 1;
+	private String				delimiter		= DEFAULT_DELIMITER;
 
-	private int					batchSize	= DEFAULT_BATCH_SIZE;
+	private String				hint			= DEFAULT_HINT;
+
+	private int					conc			= 1;
+
+	private boolean				autoCommit		= true;
+
+	private boolean				ignoreError		= false;
+
+	private boolean				useRawCmd		= false;
+
+	private int					batchSize		= DEFAULT_BATCH_SIZE;
+
+	private boolean				rewriteBatch	= DEFAULT_REWRITE_BATCH;
 
 	private ConnectionFactory	dataBase;
 
 	private Connection			connection;
 
-	private String				delimiter	= DEFAULT_DELIMITER;
-
-	private String				hint		= DEFAULT_HINT;
-
-	private boolean				autoCommit	= true;
-
-	private boolean				ignoreError	= false;
-
-	private boolean				useRawCmd	= false;
-
-	private boolean				exit		= false;
+	private boolean				exit			= false;
 
 	public boolean execute(String cmd)
 	{
@@ -256,6 +261,7 @@ public class CommandClient
 				.setConcurrency(this.getConcurrency())//
 				.setBatchSize(this.getBatchSize()) //
 				.setDataBase(this.getDataBase()) //
+				.setRewriteBatch(this.isRewriteBatch()) //
 				.setParser(build.buildParser()) //
 				.setTemplate(build.buildTemplate()) //
 				.setOut(this.getOut()).setErr(this.getErr());
@@ -319,12 +325,12 @@ public class CommandClient
 		}
 	}
 
-	protected int getBatchSize()
+	public int getBatchSize()
 	{
 		return batchSize;
 	}
 
-	protected int getConcurrency()
+	public int getConcurrency()
 	{
 		return conc;
 	}
@@ -522,6 +528,11 @@ public class CommandClient
 		return ignoreError;
 	}
 
+	public boolean isRewriteBatch()
+	{
+		return rewriteBatch;
+	}
+
 	public boolean isUseRawCmd()
 	{
 		return useRawCmd;
@@ -613,13 +624,13 @@ public class CommandClient
 		return this;
 	}
 
-	protected CommandClient setBatchSize(int batchSize)
+	public CommandClient setBatchSize(int batchSize)
 	{
 		this.batchSize = batchSize;
 		return this;
 	}
 
-	protected CommandClient setConcurrency(int conc)
+	public CommandClient setConcurrency(int conc)
 	{
 		this.conc = conc;
 		return this;
@@ -669,6 +680,12 @@ public class CommandClient
 	public CommandClient setOut(PrintWriter output)
 	{
 		this.out = output;
+		return this;
+	}
+
+	public CommandClient setRewriteBatch(boolean rewriteBatch)
+	{
+		this.rewriteBatch = rewriteBatch;
 		return this;
 	}
 

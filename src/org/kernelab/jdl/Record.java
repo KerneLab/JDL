@@ -1,6 +1,7 @@
 package org.kernelab.jdl;
 
 import java.io.PrintWriter;
+import java.nio.charset.Charset;
 
 public class Record
 {
@@ -12,6 +13,16 @@ public class Record
 	{
 		this.id = id;
 		this.data = data;
+	}
+
+	public long bytes(Charset cs)
+	{
+		long bytes = 0L;
+		for (String d : this.data)
+		{
+			bytes += d.getBytes(cs).length;
+		}
+		return bytes;
 	}
 
 	public void printError(PrintWriter err, Exception ex)

@@ -84,8 +84,9 @@ public class InsertBuilder
 
 		return new InsertTemplate() //
 				.setItems(this.getLoadItems()) //
-				.setInsert("INSERT INTO " + this.getTable() + " (" + cols.toString() + ")" //
-						+ " VALUES (" + vals.toString() + ")") //
+				.setTable(this.getTable()) //
+				.setTarget(cols.toString()) //
+				.setValues(vals.toString()) //
 				.setIndexes(idx) //
 		;
 	}
