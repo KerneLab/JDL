@@ -15,41 +15,43 @@ import org.kernelab.basis.Tools;
 
 public class LoadWorker implements Runnable
 {
-	private static int			ID			= 0;
+	protected static final int[]	EMPTY_RESULT	= new int[] { 0, 0 };
 
-	private final int			id			= ID++;
+	private static int				ID				= 0;
 
-	protected final Lock		lock		= new ReentrantLock();
+	private final int				id				= ID++;
 
-	protected final Condition	notStarted	= lock.newCondition();
+	protected final Lock			lock			= new ReentrantLock();
 
 	// protected final Condition untilWaiting = lock.newCondition();
 
-	protected final Condition	untilWakeup	= lock.newCondition();
+	protected final Condition		notStarted		= lock.newCondition();
 
-	private LoadMaster			master;
+	protected final Condition		untilWakeup		= lock.newCondition();
 
-	private Connection			connection;
+	private LoadMaster				master;
 
-	private int					batchSize	= CommandClient.DEFAULT_BATCH_SIZE;
+	private Connection				connection;
 
-	private Thread				thread;
+	private PreparedStatement		statement;
+
+	private String					rewriteInsert;
+
+	private PreparedStatement		rewriteStatement;
 
 	// private boolean waiting = false;
 
-	private boolean				needWait	= true;
+	private Thread					thread;
 
-	private boolean				stopping	= false;
+	private boolean					needWait		= true;
 
-	private boolean				started		= false;
+	private boolean					stopping		= false;
 
-	private PreparedStatement	statement;
-
-	private LinkedList<Record>	records		= new LinkedList<Record>();
-
-	private LinkedList<Record>	bads		= new LinkedList<Record>();
+	private boolean					started			= false;
 
 	// private boolean running = false;
+
+	private LinkedList<Record>		records			= new LinkedList<Record>();
 
 	public LoadWorker(LoadMaster master, Connection conn)
 	{
@@ -65,6 +67,22 @@ public class LoadWorker implements Runnable
 		ps.addBatch();
 	}
 
+	protected int addRewrite(PreparedStatement ps, int[] index, List<Record> records) throws SQLException
+	{
+		String[] data = null;
+		int offset = 0, i = 0;
+		for (Record record : records)
+		{
+			data = record.data;
+			for (i = 0; i < index.length; i++)
+			{
+				ps.setString(offset + i + 1, data[index[i]]);
+			}
+			offset += index.length;
+		}
+		return ps.executeUpdate();
+	}
+
 	protected int addUpdate(PreparedStatement ps, int[] index, String[] data) throws SQLException
 	{
 		for (int i = 0; i < index.length; i++)
@@ -74,28 +92,34 @@ public class LoadWorker implements Runnable
 		return ps.executeUpdate();
 	}
 
-	protected int[] checkResult(int[] results, LinkedList<Record> records, LinkedList<Record> bads)
+	protected int[] checkResult(int[] counts, LinkedList<Record> records)
 	{
-		int[] result = new int[] { records.size(), 0 };
-		int i = 0, res = -1;
-		bads.clear();
+		int i = 0;
+		LinkedList<Record> good = new LinkedList<Record>(), bads = new LinkedList<Record>();
 		Record record = null;
 		while (!records.isEmpty())
 		{
 			record = records.removeFirst();
-			res = results[i];
-			if (res == Statement.EXECUTE_FAILED)
+			if (counts == null || counts[i] == Statement.EXECUTE_FAILED)
 			{
 				bads.add(record);
 			}
+			else
+			{
+				good.add(record);
+			}
 			i++;
 		}
-		result[1] = this.trackBads(this.getConnection(), this.getStatement(), this.getTemplate().getIndexes(), bads);
-		return result;
+
+		int[] goodRes = this.doBatch(this.getConnection(), this.getTemplate(), good);
+		int[] badsRes = this.trackBads(this.getConnection(), this.getStatement(), this.getTemplate(), bads);
+
+		return new int[] { goodRes[0] + badsRes[0], goodRes[1] + badsRes[1] };
 	}
 
 	protected void destroy()
 	{
+		// log("destroying");
 		LoadMaster master = null;
 
 		lock.lock();
@@ -103,6 +127,7 @@ public class LoadWorker implements Runnable
 		{
 			master = this.getMaster();
 			this.setStatement(null);
+			this.rewriteStatement = null;
 			try
 			{
 				this.getConnection().close();
@@ -112,7 +137,6 @@ public class LoadWorker implements Runnable
 			{
 			}
 			this.getRecords().clear();
-			this.getBads().clear();
 			this.setThread(null);
 			this.setMaster(null);
 		}
@@ -125,9 +149,28 @@ public class LoadWorker implements Runnable
 		{
 			master.reportDestroy(this);
 		}
+		// log("destroyed");
 	}
 
-	protected int[] doBatch(Connection conn, PreparedStatement ps, int[] index, LinkedList<Record> records)
+	protected int[] doBatch(Connection conn, InsertTemplate template, LinkedList<Record> records)
+	{
+		if (records.isEmpty())
+		{
+			return EMPTY_RESULT;
+		}
+
+		if (this.getMaster().isRewriteBatch())
+		{
+			return this.doBatchRewrite(conn, template, records);
+		}
+		else
+		{
+			return this.doBatchNormal(conn, this.getStatement(), template, records);
+		}
+	}
+
+	protected int[] doBatchNormal(Connection conn, PreparedStatement ps, InsertTemplate template,
+			LinkedList<Record> records)
 	{
 		int total = records.size();
 		try
@@ -136,19 +179,22 @@ public class LoadWorker implements Runnable
 
 			ps.clearBatch();
 
+			int[] index = template.getIndexes();
+
 			for (Record record : records)
 			{
 				this.addBatch(ps, index, record.data);
 			}
 
-			int[] res = ps.executeBatch();
+			ps.executeBatch();
 
 			conn.commit();
 
-			return this.checkResult(res, records, this.getBads());
+			return new int[] { total, 0 };
 		}
 		catch (BatchUpdateException e)
 		{
+			int[] counts = e.getUpdateCounts();
 			try
 			{
 				conn.rollback();
@@ -157,7 +203,7 @@ public class LoadWorker implements Runnable
 			{
 				printError(ex);
 			}
-			return this.checkResult(e.getUpdateCounts(), records, this.getBads());
+			return this.checkResult(counts, records);
 		}
 		catch (SQLException e)
 		{
@@ -168,6 +214,44 @@ public class LoadWorker implements Runnable
 		{
 			printError(e);
 			return new int[] { total, total };
+		}
+	}
+
+	protected int[] doBatchRewrite(Connection conn, InsertTemplate template, LinkedList<Record> records)
+	{
+		int total = records.size();
+		PreparedStatement ps = null;
+		try
+		{
+			conn.setAutoCommit(true);
+
+			ps = this.getRewriteStatement(conn, template, records.size());
+
+			this.addRewrite(ps, template.getIndexes(), records);
+
+			return new int[] { total, 0 };
+		}
+		catch (SQLException e)
+		{
+			return this.checkResult(null, records);
+		}
+		catch (Throwable e)
+		{
+			printError(e);
+			return new int[] { total, total };
+		}
+		finally
+		{
+			if (ps != null && ps != this.rewriteStatement)
+			{
+				try
+				{
+					ps.close();
+				}
+				catch (SQLException e)
+				{
+				}
+			}
 		}
 	}
 
@@ -194,14 +278,9 @@ public class LoadWorker implements Runnable
 		return true;
 	}
 
-	protected LinkedList<Record> getBads()
-	{
-		return bads;
-	}
-
 	public int getBatchSize()
 	{
-		return batchSize;
+		return this.getMaster().getBatchSize();
 	}
 
 	protected Connection getConnection()
@@ -222,6 +301,34 @@ public class LoadWorker implements Runnable
 	protected LinkedList<Record> getRecords()
 	{
 		return records;
+	}
+
+	protected PreparedStatement getRewriteStatement(Connection conn, InsertTemplate template, int rows)
+			throws SQLException
+	{
+		if (rows == this.getBatchSize())
+		{
+			if (this.rewriteInsert == null)
+			{
+				this.rewriteInsert = template.getInsert(rows);
+				if (this.rewriteStatement != null)
+				{
+					try
+					{
+						this.rewriteStatement.close();
+					}
+					catch (SQLException e)
+					{
+					}
+				}
+				this.rewriteStatement = conn.prepareStatement(this.rewriteInsert);
+			}
+			return this.rewriteStatement;
+		}
+		else
+		{
+			return conn.prepareStatement(template.getInsert(rows));
+		}
 	}
 
 	protected PreparedStatement getStatement()
@@ -272,9 +379,9 @@ public class LoadWorker implements Runnable
 		return stopping;
 	}
 
-	protected void log(String log)
+	protected void log(String msg)
 	{
-		Tools.debug(log);
+		Tools.debug(Tools.getDateTimeString() + " Worker#" + id + " " + msg);
 	}
 
 	protected void logBad(Record record, Exception ex)
@@ -390,7 +497,7 @@ public class LoadWorker implements Runnable
 				// // this.setRunning(false);
 				// if (!this.isStopping())
 				// {
-				// // log("Worker#" + this.getId() + " waiting");
+				// // log("waiting");
 				// try
 				// {
 				// this.wait();
@@ -398,7 +505,7 @@ public class LoadWorker implements Runnable
 				// catch (InterruptedException e)
 				// {
 				// }
-				// // log("Worker#" + this.getId() + " wakeup");
+				// // log("wakeup");
 				// }
 				//
 				// if (this.isStopping())
@@ -412,15 +519,16 @@ public class LoadWorker implements Runnable
 				// this.setRunning(true);
 				// }
 
-				// log("Worker#" + id + " wakeup");
+				// log("wakeup");
 				this.getMaster().reportReading(this);
 
 				badReads = this.readRecords(this.getMaster().getParser(), this.getRecords());
 
 				this.getMaster().reportRead(this);
 
-				int[] result = this.doBatch(this.getConnection(), this.getStatement(), this.getTemplate().getIndexes(),
-						this.getRecords());
+				// log("batch begin");
+				int[] result = this.doBatch(this.getConnection(), this.getTemplate(), this.getRecords());
+				// log("batch end");
 
 				this.getMaster().reportLoaded(this, result[0] + badReads, result[1] + badReads);
 			}
@@ -437,18 +545,6 @@ public class LoadWorker implements Runnable
 			// this.notifyAll();
 			// }
 		}
-	}
-
-	protected LoadWorker setBads(LinkedList<Record> bads)
-	{
-		this.bads = bads;
-		return this;
-	}
-
-	public LoadWorker setBatchSize(int batchSize)
-	{
-		this.batchSize = Math.max(batchSize, 1);
-		return this;
 	}
 
 	protected LoadWorker setConnection(Connection connection)
@@ -566,8 +662,9 @@ public class LoadWorker implements Runnable
 		}
 	}
 
-	protected int trackBads(Connection conn, PreparedStatement ps, int[] index, LinkedList<Record> bads)
+	protected int[] trackBads(Connection conn, PreparedStatement ps, InsertTemplate template, LinkedList<Record> bads)
 	{
+		int[] index = template.getIndexes();
 		int total = bads.size(), good = 0;
 		try
 		{
@@ -587,17 +684,17 @@ public class LoadWorker implements Runnable
 					this.logBad(rec, err);
 				}
 			}
-			return total - good;
+			return new int[] { total, total - good };
 		}
 		catch (SQLException e)
 		{
 			printError(e);
-			return total - good;
+			return new int[] { total, total - good };
 		}
 		catch (Throwable e)
 		{
 			printError(e);
-			return total - good;
+			return new int[] { total, total - good };
 		}
 	}
 
