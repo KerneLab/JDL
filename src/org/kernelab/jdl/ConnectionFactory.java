@@ -25,7 +25,7 @@ public class ConnectionFactory
 		this.properties.put("password", this.password);
 	}
 
-	public Connection newConnection() throws SQLException
+	public synchronized Connection newConnection() throws SQLException
 	{
 		return DriverManager.getConnection(this.url, this.properties);
 	}

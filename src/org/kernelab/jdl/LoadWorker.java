@@ -53,9 +53,9 @@ public class LoadWorker implements Runnable
 
 	private LinkedList<Record>		records			= new LinkedList<Record>();
 
-	public LoadWorker(LoadMaster master, Connection conn)
+	public LoadWorker(LoadMaster master)
 	{
-		this.setMaster(master).setConnection(conn);
+		this.setMaster(master);
 	}
 
 	protected void addBatch(PreparedStatement ps, int[] index, String[] data) throws SQLException
@@ -92,7 +92,7 @@ public class LoadWorker implements Runnable
 		return ps.executeUpdate();
 	}
 
-	protected int[] checkResult(int[] counts, LinkedList<Record> records)
+	protected int[] checkResult(Connection conn, int[] counts, LinkedList<Record> records)
 	{
 		int i = 0;
 		LinkedList<Record> good = new LinkedList<Record>(), bads = new LinkedList<Record>();
@@ -111,8 +111,8 @@ public class LoadWorker implements Runnable
 			i++;
 		}
 
-		int[] goodRes = this.doBatch(this.getConnection(), this.getTemplate(), good);
-		int[] badsRes = this.trackBads(this.getConnection(), this.getStatement(), this.getTemplate(), bads);
+		int[] goodRes = this.doBatch(conn, this.getTemplate(), good);
+		int[] badsRes = this.trackBads(conn, this.getStatement(), this.getTemplate(), bads);
 
 		return new int[] { goodRes[0] + badsRes[0], goodRes[1] + badsRes[1] };
 	}
@@ -126,19 +126,35 @@ public class LoadWorker implements Runnable
 		try
 		{
 			master = this.getMaster();
-			this.setStatement(null);
-			this.rewriteStatement = null;
-			try
+			if (master != null)
 			{
-				this.getConnection().close();
-				this.setConnection(null);
+				this.setStatement(null);
+				this.rewriteStatement = null;
+				try
+				{
+					Connection conn = this.getConnection(false);
+					if (conn != null)
+					{
+						conn.close();
+					}
+				}
+				catch (Exception e)
+				{
+				}
+				finally
+				{
+					try
+					{
+						this.setConnection(null);
+					}
+					catch (SQLException e)
+					{
+					}
+				}
+				this.getRecords().clear();
+				this.setThread(null);
+				this.setMaster(null);
 			}
-			catch (Exception e)
-			{
-			}
-			this.getRecords().clear();
-			this.setThread(null);
-			this.setMaster(null);
 		}
 		finally
 		{
@@ -203,7 +219,7 @@ public class LoadWorker implements Runnable
 			{
 				printError(ex);
 			}
-			return this.checkResult(counts, records);
+			return this.checkResult(conn, counts, records);
 		}
 		catch (SQLException e)
 		{
@@ -233,7 +249,7 @@ public class LoadWorker implements Runnable
 		}
 		catch (SQLException e)
 		{
-			return this.checkResult(null, records);
+			return this.checkResult(conn, null, records);
 		}
 		catch (Throwable e)
 		{
@@ -285,6 +301,58 @@ public class LoadWorker implements Runnable
 
 	protected Connection getConnection()
 	{
+		return getConnection(true);
+	}
+
+	protected Connection getConnection(boolean newIfNull)
+	{
+		do
+		{
+			try
+			{
+				if (connection == null || !connection.isValid(5))
+				{
+					if (connection != null)
+					{
+						try
+						{
+							connection.rollback();
+						}
+						catch (SQLException e)
+						{
+						}
+						try
+						{
+							connection.close();
+						}
+						catch (SQLException e)
+						{
+						}
+						finally
+						{
+							this.setConnection(null);
+						}
+					}
+					if (newIfNull)
+					{
+						this.setConnection(this.getMaster().newConnection());
+					}
+				}
+			}
+			catch (SQLException e)
+			{
+				printError(e);
+				try
+				{
+					Thread.sleep(10 * 1000);
+				}
+				catch (InterruptedException e1)
+				{
+				}
+			}
+		}
+		while (connection == null && newIfNull);
+
 		return connection;
 	}
 
@@ -355,13 +423,10 @@ public class LoadWorker implements Runnable
 		return result;
 	}
 
-	protected void init() throws SQLException
+	protected void init(Connection conn) throws SQLException
 	{
-		if (this.getStatement() == null)
-		{
-			this.getConnection().setAutoCommit(false);
-			this.setStatement(this.getConnection().prepareStatement(this.getTemplate().getInsert()));
-		}
+		conn.setAutoCommit(false);
+		this.setStatement(conn.prepareStatement(this.getTemplate().getInsert()));
 	}
 
 	protected boolean isNeedWait()
@@ -445,8 +510,6 @@ public class LoadWorker implements Runnable
 	{
 		try
 		{
-			this.init();
-
 			int badReads = 0;
 
 			while (true)
@@ -533,9 +596,10 @@ public class LoadWorker implements Runnable
 				this.getMaster().reportLoaded(this, result[0] + badReads, result[1] + badReads);
 			}
 		}
-		catch (SQLException ex)
+		catch (Throwable ex)
 		{
 			printError(ex);
+			this.getMaster().reportError(this);
 		}
 		finally
 		{
@@ -547,9 +611,13 @@ public class LoadWorker implements Runnable
 		}
 	}
 
-	protected LoadWorker setConnection(Connection connection)
+	protected LoadWorker setConnection(Connection connection) throws SQLException
 	{
 		this.connection = connection;
+		if (connection != null)
+		{
+			this.init(connection);
+		}
 		return this;
 	}
 

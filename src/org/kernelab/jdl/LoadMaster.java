@@ -114,6 +114,10 @@ public class LoadMaster implements Runnable
 				this.workers.add(worker);
 				this.readyWorkers.add(worker);
 			}
+
+			this.stopped = false;
+			this.reading = true;
+			this.setResult(new long[] { 0L, 0L });
 		}
 		finally
 		{
@@ -126,18 +130,18 @@ public class LoadMaster implements Runnable
 		return rewriteBatch;
 	}
 
-	public boolean isStopping()
-	{
-		lock.lock();
-		try
-		{
-			return ended;
-		}
-		finally
-		{
-			lock.unlock();
-		}
-	}
+	// public boolean isStopping()
+	// {
+	// lock.lock();
+	// try
+	// {
+	// return ended;
+	// }
+	// finally
+	// {
+	// lock.unlock();
+	// }
+	// }
 
 	protected void log(String log)
 	{
@@ -151,7 +155,7 @@ public class LoadMaster implements Runnable
 
 	protected LoadWorker newWorker() throws Exception
 	{
-		return new LoadWorker(this, newConnection());
+		return new LoadWorker(this);
 	}
 
 	protected void printError(Throwable err)
@@ -176,6 +180,22 @@ public class LoadMaster implements Runnable
 		}
 	}
 
+	protected void reportError(LoadWorker worker)
+	{
+		lock.lock();
+		try
+		{
+			this.setResult(null);
+			this.reading = false;
+			this.ended = true;
+			notReading.signalAll();
+		}
+		finally
+		{
+			lock.unlock();
+		}
+	}
+
 	protected void reportLoaded(LoadWorker worker, int total, int bads)
 	{
 		// log("Worker#" + worker.getId() + " reporting loaded");
@@ -183,8 +203,11 @@ public class LoadMaster implements Runnable
 		lock.lock();
 		try
 		{
-			this.getResult()[0] += total;
-			this.getResult()[1] += bads;
+			if (this.getResult() != null)
+			{
+				this.getResult()[0] += total;
+				this.getResult()[1] += bads;
+			}
 			this.readyWorkers.add(worker);
 			this.notEmptyWorkers.signalAll();
 			// log("Worker#" + worker.getId() + " reported loaded");
@@ -253,9 +276,6 @@ public class LoadMaster implements Runnable
 			lock.lock();
 			try
 			{
-				this.stopped = false;
-				this.reading = true;
-				this.setResult(new long[] { 0L, 0L });
 				worker = this.shiftWorker();
 			}
 			finally
