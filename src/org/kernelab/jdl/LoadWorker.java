@@ -335,7 +335,21 @@ public class LoadWorker implements Runnable
 					}
 					if (newIfNull)
 					{
-						this.setConnection(this.getMaster().newConnection());
+						Connection conn = this.getMaster().newConnection();
+						if (conn.isValid(5))
+						{
+							this.setConnection(conn);
+						}
+						else
+						{
+							try
+							{
+								conn.close();
+							}
+							catch (SQLException e)
+							{
+							}
+						}
 					}
 				}
 			}

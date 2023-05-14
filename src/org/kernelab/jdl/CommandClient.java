@@ -27,6 +27,7 @@ import org.kernelab.basis.JSON.JSAN;
 import org.kernelab.basis.JSON.Pair;
 import org.kernelab.basis.Tools;
 import org.kernelab.basis.Variable;
+import org.kernelab.basis.sql.DataBase;
 import org.kernelab.basis.sql.SQLKit;
 
 public class CommandClient
@@ -34,6 +35,8 @@ public class CommandClient
 	public static final String	DEFAULT_HINT			= "SQL>";
 
 	public static final String	DEFAULT_DELIMITER		= ";";
+
+	public static final int		DEFAULT_REBALANCE		= ConnectionFactory.REBALANCE_NONE;
 
 	public static final int		DEFAULT_BATCH_SIZE		= 500;
 
@@ -76,9 +79,10 @@ public class CommandClient
 		Entrance entr = new Entrance().handle(args);
 		return new CommandClient() //
 				.setDataBase(entr.parameter("url"), entr.parameter("usr"), entr.parameter("pwd")) //
+				.setConcurrency(Variable.asInteger(entr.parameter("conc"), 0)) //
+				.setRebalance(Variable.asInteger(entr.parameter("rebalance"), DEFAULT_REBALANCE)) //
 				.setBatchSize(Variable.asInteger(entr.parameter("batchSize"), DEFAULT_BATCH_SIZE)) //
 				.setRewriteBatch("true".equalsIgnoreCase(entr.parameter("rewriteBatch"))) //
-				.setConcurrency(Variable.asInteger(entr.parameter("conc"), 0)) //
 				.setAutoCommit(!"false".equalsIgnoreCase(entr.parameter("autoCommit"))) //
 				.setIgnoreError("true".equalsIgnoreCase(entr.parameter("ignoreError"))) //
 				.setUseRawCmd("true".equalsIgnoreCase(entr.parameter("useRawCmd"))) //
@@ -196,6 +200,8 @@ public class CommandClient
 	private String				hint			= DEFAULT_HINT;
 
 	private int					conc			= 1;
+
+	private int					rebalance		= DEFAULT_REBALANCE;
 
 	private boolean				autoCommit		= true;
 
@@ -399,6 +405,11 @@ public class CommandClient
 	protected PrintWriter getOut()
 	{
 		return out;
+	}
+
+	public int getRebalance()
+	{
+		return rebalance;
 	}
 
 	public boolean interact()
@@ -644,7 +655,24 @@ public class CommandClient
 
 	public CommandClient setDataBase(String url, String username, String password)
 	{
-		return this.setDataBase(new ConnectionFactory(url, username, password));
+		return this.setDataBase(new ConnectionFactory(url, username, password)
+		{
+			@Override
+			protected String getUrl()
+			{
+				switch (CommandClient.this.getRebalance())
+				{
+					case ConnectionFactory.REBALANCE_PICKONE:
+						return DataBase.randomPickone(this.url);
+
+					case ConnectionFactory.REBALANCE_REARRANGE:
+						return DataBase.randomRearrange(this.url);
+
+					default:
+						return this.url;
+				}
+			}
+		});
 	}
 
 	protected CommandClient setDelimiter(String delimiter)
@@ -680,6 +708,12 @@ public class CommandClient
 	public CommandClient setOut(PrintWriter output)
 	{
 		this.out = output;
+		return this;
+	}
+
+	public CommandClient setRebalance(int rebalance)
+	{
+		this.rebalance = rebalance;
 		return this;
 	}
 

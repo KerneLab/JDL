@@ -7,6 +7,12 @@ import java.util.Properties;
 
 public class ConnectionFactory
 {
+	public static final int		REBALANCE_NONE		= 0;
+
+	public static final int		REBALANCE_PICKONE	= 1;
+
+	public static final int		REBALANCE_REARRANGE	= 2;
+
 	protected final String		url;
 
 	protected final String		user;
@@ -25,8 +31,18 @@ public class ConnectionFactory
 		this.properties.put("password", this.password);
 	}
 
+	protected Properties getProperties()
+	{
+		return properties;
+	}
+
+	protected String getUrl()
+	{
+		return url;
+	}
+
 	public synchronized Connection newConnection() throws SQLException
 	{
-		return DriverManager.getConnection(this.url, this.properties);
+		return DriverManager.getConnection(this.getUrl(), this.getProperties());
 	}
 }

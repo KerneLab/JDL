@@ -115,8 +115,9 @@ public class LoadMaster implements Runnable
 				this.readyWorkers.add(worker);
 			}
 
-			this.stopped = false;
 			this.reading = true;
+			this.ended = false;
+			this.stopped = false;
 			this.setResult(new long[] { 0L, 0L });
 		}
 		finally
