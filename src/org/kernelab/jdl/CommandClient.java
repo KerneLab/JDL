@@ -28,15 +28,22 @@ import org.kernelab.basis.JSON.Pair;
 import org.kernelab.basis.Tools;
 import org.kernelab.basis.Variable;
 import org.kernelab.basis.sql.DataBase;
+import org.kernelab.basis.sql.DataBase.GeneralDataBase;
 import org.kernelab.basis.sql.SQLKit;
 
 public class CommandClient
 {
+	public static final int		REBALANCE_NONE			= 0;
+
+	public static final int		REBALANCE_PICKONE		= 1;
+
+	public static final int		REBALANCE_REARRANGE		= 2;
+
 	public static final String	DEFAULT_HINT			= "SQL>";
 
 	public static final String	DEFAULT_DELIMITER		= ";";
 
-	public static final int		DEFAULT_REBALANCE		= ConnectionFactory.REBALANCE_NONE;
+	public static final int		DEFAULT_REBALANCE		= REBALANCE_NONE;
 
 	public static final int		DEFAULT_BATCH_SIZE		= 500;
 
@@ -191,33 +198,33 @@ public class CommandClient
 		return new OutputStreamWriter(os, Charset.defaultCharset());
 	}
 
-	private PrintWriter			out				= new PrintWriter(writerOf(System.out), true);
+	private PrintWriter	out				= new PrintWriter(writerOf(System.out), true);
 
-	private PrintWriter			err				= new PrintWriter(writerOf(System.err), true);
+	private PrintWriter	err				= new PrintWriter(writerOf(System.err), true);
 
-	private String				delimiter		= DEFAULT_DELIMITER;
+	private String		delimiter		= DEFAULT_DELIMITER;
 
-	private String				hint			= DEFAULT_HINT;
+	private String		hint			= DEFAULT_HINT;
 
-	private int					conc			= 1;
+	private int			conc			= 1;
 
-	private int					rebalance		= DEFAULT_REBALANCE;
+	private int			rebalance		= DEFAULT_REBALANCE;
 
-	private boolean				autoCommit		= true;
+	private boolean		autoCommit		= true;
 
-	private boolean				ignoreError		= false;
+	private boolean		ignoreError		= false;
 
-	private boolean				useRawCmd		= false;
+	private boolean		useRawCmd		= false;
 
-	private int					batchSize		= DEFAULT_BATCH_SIZE;
+	private int			batchSize		= DEFAULT_BATCH_SIZE;
 
-	private boolean				rewriteBatch	= DEFAULT_REWRITE_BATCH;
+	private boolean		rewriteBatch	= DEFAULT_REWRITE_BATCH;
 
-	private ConnectionFactory	dataBase;
+	private DataBase	dataBase;
 
-	private Connection			connection;
+	private Connection	connection;
 
-	private boolean				exit			= false;
+	private boolean		exit			= false;
 
 	public boolean execute(String cmd)
 	{
@@ -348,29 +355,72 @@ public class CommandClient
 
 	protected Connection getConnection(boolean newIfNull) throws SQLException
 	{
-		if (connection == null || !connection.isValid(5))
+		do
 		{
-			if (connection != null)
+			try
 			{
+				if (connection == null || !connection.isValid(5))
+				{
+					if (connection != null)
+					{
+						try
+						{
+							connection.rollback();
+						}
+						catch (SQLException e)
+						{
+						}
+						try
+						{
+							connection.close();
+						}
+						catch (SQLException e)
+						{
+						}
+						finally
+						{
+							connection = null;
+						}
+					}
+					if (newIfNull)
+					{
+						Connection conn = this.newConnection();
+						if (conn.isValid(5))
+						{
+							conn.setAutoCommit(this.isAutoCommit());
+							connection = conn;
+						}
+						else
+						{
+							try
+							{
+								conn.close();
+							}
+							catch (SQLException e)
+							{
+							}
+						}
+					}
+				}
+			}
+			catch (SQLException e)
+			{
+				printError(e);
 				try
 				{
-					connection.close();
+					Thread.sleep(10 * 1000);
 				}
-				catch (SQLException e)
+				catch (InterruptedException e1)
 				{
 				}
-				connection = null;
-			}
-			if (newIfNull)
-			{
-				connection = this.newConnection();
-				connection.setAutoCommit(this.isAutoCommit());
 			}
 		}
+		while (connection == null && newIfNull);
+
 		return connection;
 	}
 
-	protected ConnectionFactory getDataBase()
+	protected DataBase getDataBase()
 	{
 		return dataBase;
 	}
@@ -647,7 +697,7 @@ public class CommandClient
 		return this;
 	}
 
-	public CommandClient setDataBase(ConnectionFactory db)
+	public CommandClient setDataBase(DataBase db)
 	{
 		this.dataBase = db;
 		return this;
@@ -655,17 +705,22 @@ public class CommandClient
 
 	public CommandClient setDataBase(String url, String username, String password)
 	{
-		return this.setDataBase(new ConnectionFactory(url, username, password)
+		return this.setDataBase(new GeneralDataBase(url, username, password)
 		{
+			/**
+			 * 
+			 */
+			private static final long serialVersionUID = 5568975809408157880L;
+
 			@Override
-			protected String getUrl()
+			public String getURL()
 			{
 				switch (CommandClient.this.getRebalance())
 				{
-					case ConnectionFactory.REBALANCE_PICKONE:
+					case REBALANCE_PICKONE:
 						return DataBase.randomPickone(this.url);
 
-					case ConnectionFactory.REBALANCE_REARRANGE:
+					case REBALANCE_REARRANGE:
 						return DataBase.randomRearrange(this.url);
 
 					default:

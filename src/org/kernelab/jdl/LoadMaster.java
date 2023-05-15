@@ -16,6 +16,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import org.kernelab.basis.JSON;
 import org.kernelab.basis.Tools;
+import org.kernelab.basis.sql.DataBase;
 
 public class LoadMaster implements Runnable
 {
@@ -23,7 +24,7 @@ public class LoadMaster implements Runnable
 
 	private InsertTemplate			template;
 
-	private ConnectionFactory		dataBase;
+	private DataBase				dataBase;
 
 	private long[]					result				= null;
 
@@ -69,7 +70,7 @@ public class LoadMaster implements Runnable
 		return concurrency;
 	}
 
-	public ConnectionFactory getDataBase()
+	public DataBase getDataBase()
 	{
 		return dataBase;
 	}
@@ -149,7 +150,7 @@ public class LoadMaster implements Runnable
 		Tools.debug(log);
 	}
 
-	protected Connection newConnection() throws SQLException
+	protected synchronized Connection newConnection() throws SQLException
 	{
 		return this.getDataBase().newConnection();
 	}
@@ -380,7 +381,7 @@ public class LoadMaster implements Runnable
 		return this;
 	}
 
-	public LoadMaster setDataBase(ConnectionFactory dataBase)
+	public LoadMaster setDataBase(DataBase dataBase)
 	{
 		this.dataBase = dataBase;
 		return this;

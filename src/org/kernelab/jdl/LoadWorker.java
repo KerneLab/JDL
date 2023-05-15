@@ -92,7 +92,7 @@ public class LoadWorker implements Runnable
 		return ps.executeUpdate();
 	}
 
-	protected int[] checkResult(Connection conn, int[] counts, LinkedList<Record> records)
+	protected int[] checkResult(int[] counts, LinkedList<Record> records)
 	{
 		int i = 0;
 		LinkedList<Record> good = new LinkedList<Record>(), bads = new LinkedList<Record>();
@@ -111,8 +111,8 @@ public class LoadWorker implements Runnable
 			i++;
 		}
 
-		int[] goodRes = this.doBatch(conn, this.getTemplate(), good);
-		int[] badsRes = this.trackBads(conn, this.getStatement(), this.getTemplate(), bads);
+		int[] goodRes = this.doBatch(this.getConnection(), this.getTemplate(), good);
+		int[] badsRes = this.trackBads(this.getConnection(), this.getStatement(), this.getTemplate(), bads);
 
 		return new int[] { goodRes[0] + badsRes[0], goodRes[1] + badsRes[1] };
 	}
@@ -219,12 +219,20 @@ public class LoadWorker implements Runnable
 			{
 				printError(ex);
 			}
-			return this.checkResult(conn, counts, records);
+			return this.checkResult(counts, records);
 		}
 		catch (SQLException e)
 		{
 			printError(e);
-			return new int[] { total, total };
+			try
+			{
+				conn.rollback();
+			}
+			catch (SQLException ex)
+			{
+				printError(ex);
+			}
+			return this.checkResult(null, records);
 		}
 		catch (Throwable e)
 		{
@@ -249,7 +257,7 @@ public class LoadWorker implements Runnable
 		}
 		catch (SQLException e)
 		{
-			return this.checkResult(conn, null, records);
+			return this.checkResult(null, records);
 		}
 		catch (Throwable e)
 		{
@@ -390,18 +398,11 @@ public class LoadWorker implements Runnable
 	{
 		if (rows == this.getBatchSize())
 		{
-			if (this.rewriteInsert == null)
+			if (this.rewriteStatement == null)
 			{
-				this.rewriteInsert = template.getInsert(rows);
-				if (this.rewriteStatement != null)
+				if (this.rewriteInsert == null)
 				{
-					try
-					{
-						this.rewriteStatement.close();
-					}
-					catch (SQLException e)
-					{
-					}
+					this.rewriteInsert = template.getInsert(rows);
 				}
 				this.rewriteStatement = conn.prepareStatement(this.rewriteInsert);
 			}
@@ -441,6 +442,7 @@ public class LoadWorker implements Runnable
 	{
 		conn.setAutoCommit(false);
 		this.setStatement(conn.prepareStatement(this.getTemplate().getInsert()));
+		this.rewriteStatement = null;
 	}
 
 	protected boolean isNeedWait()
