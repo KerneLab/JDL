@@ -60,6 +60,8 @@ public class LoadMaster implements Runnable
 
 	private boolean					rewriteBatch		= CommandClient.DEFAULT_REWRITE_BATCH;
 
+	private int						rebalance			= CommandClient.REBALANCE_NONE;
+
 	public int getBatchSize()
 	{
 		return batchSize;
@@ -88,6 +90,11 @@ public class LoadMaster implements Runnable
 	public RecordParser getParser()
 	{
 		return parser;
+	}
+
+	public int getRebalance()
+	{
+		return rebalance;
 	}
 
 	public long[] getResult()
@@ -132,6 +139,11 @@ public class LoadMaster implements Runnable
 		return rewriteBatch;
 	}
 
+	protected void log(String log)
+	{
+		Tools.debug(log);
+	}
+
 	// public boolean isStopping()
 	// {
 	// lock.lock();
@@ -144,11 +156,6 @@ public class LoadMaster implements Runnable
 	// lock.unlock();
 	// }
 	// }
-
-	protected void log(String log)
-	{
-		Tools.debug(log);
-	}
 
 	protected synchronized Connection newConnection() throws SQLException
 	{
@@ -402,6 +409,12 @@ public class LoadMaster implements Runnable
 	public LoadMaster setParser(RecordParser parser)
 	{
 		this.parser = parser;
+		return this;
+	}
+
+	public LoadMaster setRebalance(int rebalance)
+	{
+		this.rebalance = rebalance;
 		return this;
 	}
 

@@ -274,6 +274,7 @@ public class CommandClient
 				.setConcurrency(this.getConcurrency())//
 				.setBatchSize(this.getBatchSize()) //
 				.setDataBase(this.getDataBase()) //
+				.setRebalance(this.getRebalance()) //
 				.setRewriteBatch(this.isRewriteBatch()) //
 				.setParser(build.buildParser()) //
 				.setTemplate(build.buildTemplate()) //

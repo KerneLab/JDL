@@ -112,7 +112,7 @@ public class LoadWorker implements Runnable
 		}
 
 		int[] goodRes = this.doBatch(this.getConnection(), this.getTemplate(), good);
-		int[] badsRes = this.trackBads(this.getConnection(), this.getStatement(), this.getTemplate(), bads);
+		int[] badsRes = this.trackBads(this.getConnection(), this.getTemplate(), bads);
 
 		return new int[] { goodRes[0] + badsRes[0], goodRes[1] + badsRes[1] };
 	}
@@ -181,32 +181,48 @@ public class LoadWorker implements Runnable
 		}
 		else
 		{
-			return this.doBatchNormal(conn, this.getStatement(), template, records);
+			return this.doBatchNormal(conn, template, records);
 		}
 	}
 
-	protected int[] doBatchNormal(Connection conn, PreparedStatement ps, InsertTemplate template,
-			LinkedList<Record> records)
+	protected int[] doBatchNormal(Connection conn, InsertTemplate template, LinkedList<Record> records)
 	{
 		int total = records.size();
 		try
 		{
 			conn.setAutoCommit(false);
 
-			ps.clearBatch();
-
-			int[] index = template.getIndexes();
-
-			for (Record record : records)
+			PreparedStatement ps = this.ensureStatement();
+			try
 			{
-				this.addBatch(ps, index, record.data);
+				ps.clearBatch();
+
+				int[] index = template.getIndexes();
+
+				for (Record record : records)
+				{
+					this.addBatch(ps, index, record.data);
+				}
+
+				ps.executeBatch();
+
+				conn.commit();
+
+				return new int[] { total, 0 };
 			}
-
-			ps.executeBatch();
-
-			conn.commit();
-
-			return new int[] { total, 0 };
+			finally
+			{
+				if (ps != null && ps != this.getStatement())
+				{
+					try
+					{
+						ps.close();
+					}
+					catch (Exception e)
+					{
+					}
+				}
+			}
 		}
 		catch (BatchUpdateException e)
 		{
@@ -276,6 +292,18 @@ public class LoadWorker implements Runnable
 				{
 				}
 			}
+		}
+	}
+
+	protected PreparedStatement ensureStatement() throws SQLException
+	{
+		if (this.getRebalance() == CommandClient.REBALANCE_NONE)
+		{
+			return this.newStatement();
+		}
+		else
+		{
+			return this.getStatement();
 		}
 	}
 
@@ -388,6 +416,11 @@ public class LoadWorker implements Runnable
 		return master;
 	}
 
+	protected int getRebalance()
+	{
+		return this.getMaster().getRebalance();
+	}
+
 	protected LinkedList<Record> getRecords()
 	{
 		return records;
@@ -441,7 +474,7 @@ public class LoadWorker implements Runnable
 	protected void init(Connection conn) throws SQLException
 	{
 		conn.setAutoCommit(false);
-		this.setStatement(conn.prepareStatement(this.getTemplate().getInsert()));
+		this.setStatement(this.newStatement());
 		this.rewriteStatement = null;
 	}
 
@@ -468,6 +501,11 @@ public class LoadWorker implements Runnable
 	protected void logBad(Record record, Exception ex)
 	{
 		record.printError(this.getMaster().getErr(), ex);
+	}
+
+	protected PreparedStatement newStatement() throws SQLException
+	{
+		return this.getConnection().prepareStatement(this.getTemplate().getInsert());
 	}
 
 	// protected boolean isRunning()
@@ -746,7 +784,7 @@ public class LoadWorker implements Runnable
 		}
 	}
 
-	protected int[] trackBads(Connection conn, PreparedStatement ps, InsertTemplate template, LinkedList<Record> bads)
+	protected int[] trackBads(Connection conn, InsertTemplate template, LinkedList<Record> bads)
 	{
 		int[] index = template.getIndexes();
 		int total = bads.size(), good = 0;
@@ -754,21 +792,38 @@ public class LoadWorker implements Runnable
 		{
 			conn.setAutoCommit(true);
 
-			Record rec = null;
-			while (!bads.isEmpty())
+			PreparedStatement ps = this.ensureStatement();
+			try
 			{
-				rec = bads.removeFirst();
-				try
+				Record rec = null;
+				while (!bads.isEmpty())
 				{
-					this.addUpdate(ps, index, rec.data);
-					good++;
+					rec = bads.removeFirst();
+					try
+					{
+						this.addUpdate(ps, index, rec.data);
+						good++;
+					}
+					catch (SQLException err)
+					{
+						this.logBad(rec, err);
+					}
 				}
-				catch (SQLException err)
+				return new int[] { total, total - good };
+			}
+			finally
+			{
+				if (ps != null && ps != this.getStatement())
 				{
-					this.logBad(rec, err);
+					try
+					{
+						ps.close();
+					}
+					catch (Exception e)
+					{
+					}
 				}
 			}
-			return new int[] { total, total - good };
 		}
 		catch (SQLException e)
 		{
