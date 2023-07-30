@@ -24,7 +24,6 @@ import java.util.Scanner;
 import org.kernelab.basis.Entrance;
 import org.kernelab.basis.JSON;
 import org.kernelab.basis.JSON.JSAN;
-import org.kernelab.basis.JSON.Pair;
 import org.kernelab.basis.Tools;
 import org.kernelab.basis.Variable;
 import org.kernelab.basis.sql.DataBase;
@@ -623,56 +622,7 @@ public class CommandClient
 
 	protected void output(Object object, int indents, String indent) throws IOException
 	{
-		PrintWriter out = this.getOut();
-
-		if (out == null)
-		{
-			return;
-		}
-
-		if (!(object instanceof JSON))
-		{
-			out.print(Tools.repeat(indent, indents));
-			out.print(JSON.SerializeValueOf(object));
-			return;
-		}
-
-		JSON json = (JSON) object;
-		if (json instanceof JSAN)
-		{
-			if (isAllPrimaryData(json))
-			{
-				out.print(Tools.repeat(indent, indents));
-				JSON.Serialize(json, out, -1);
-			}
-			else
-			{
-				out.print(Tools.repeat(indent, indents));
-				out.println("[");
-				for (Object value : json)
-				{
-					output(value, indents + 1, indent);
-					out.println(",");
-				}
-				out.print(Tools.repeat(indent, indents));
-				out.print("]");
-			}
-		}
-		else
-		{
-			out.print(Tools.repeat(indent, indents));
-			out.println("{");
-			for (Pair pair : json.pairs())
-			{
-				out.print(Tools.repeat(indent, indents + 1));
-				out.print(JSON.SerializeValueOf(pair.getKey()));
-				out.print(":");
-				output(pair.getValue(), 0, "  ");
-				out.println(",");
-			}
-			out.print(Tools.repeat(indent, indents));
-			out.print("}");
-		}
+		JSON.Output(this.getOut(), object, indents, indent);
 	}
 
 	protected void printError(Throwable err)
