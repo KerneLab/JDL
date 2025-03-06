@@ -458,6 +458,7 @@ public class LoadMaster implements Runnable
 		lock.lock();
 		try
 		{
+			this.ended = true;
 			workers.addAll(this.workers);
 		}
 		finally

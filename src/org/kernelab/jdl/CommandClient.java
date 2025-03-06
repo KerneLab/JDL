@@ -223,6 +223,10 @@ public class CommandClient
 
 	private Connection	connection;
 
+	private Statement	statement;
+
+	private LoadMaster	loader;
+
 	private boolean		exit			= false;
 
 	public boolean execute(String cmd)
@@ -277,13 +281,23 @@ public class CommandClient
 				.setRewriteBatch(this.isRewriteBatch()) //
 				.setParser(build.buildParser()) //
 				.setTemplate(build.buildTemplate()) //
-				.setOut(this.getOut()).setErr(this.getErr());
+				.setOut(this.getOut()) //
+				.setErr(this.getErr());
 
 		long ts = System.currentTimeMillis();
 
-		new Thread(master).start();
+		synchronized (this)
+		{
+			new Thread(master).start();
+			this.loader = master;
+		}
 
 		master.waitForStopped();
+
+		synchronized (this)
+		{
+			this.loader = null;
+		}
 
 		if (master.getResult() == null)
 		{
@@ -308,31 +322,37 @@ public class CommandClient
 	{
 		Connection conn = this.getConnection();
 
-		Statement stmt = null;
 		try
 		{
-			stmt = conn.createStatement();
-
-			if (stmt.execute(sql))
+			synchronized (this)
 			{
-				return resultSetToJSAN(stmt.getResultSet());
+				statement = conn.createStatement();
+			}
+
+			if (statement.execute(sql))
+			{
+				return resultSetToJSAN(statement.getResultSet());
 			}
 			else
 			{
-				return stmt.getUpdateCount();
+				return statement.getUpdateCount();
 			}
 		}
 		finally
 		{
-			if (stmt != null)
+			synchronized (this)
 			{
-				try
+				if (statement != null)
 				{
-					stmt.close();
-				}
-				catch (Exception e)
-				{
-					printError(e);
+					try
+					{
+						statement.close();
+					}
+					catch (Exception e)
+					{
+						printError(e);
+					}
+					statement = null;
 				}
 			}
 		}
@@ -469,6 +489,8 @@ public class CommandClient
 		Scanner input = null;
 		try
 		{
+			this.listenShutdown();
+
 			input = new Scanner(readerOf(System.in));
 			do
 			{
@@ -597,6 +619,35 @@ public class CommandClient
 	public boolean isUseRawCmd()
 	{
 		return useRawCmd;
+	}
+
+	protected void listenShutdown()
+	{
+		Runtime.getRuntime().addShutdownHook(new Thread()
+		{
+			@Override
+			public void run()
+			{
+				synchronized (CommandClient.this)
+				{
+					if (statement != null)
+					{
+						try
+						{
+							statement.cancel();
+						}
+						catch (Exception e)
+						{
+						}
+					}
+
+					if (loader != null)
+					{
+						loader.stop();
+					}
+				}
+			}
+		});
 	}
 
 	protected Connection newConnection() throws SQLException
