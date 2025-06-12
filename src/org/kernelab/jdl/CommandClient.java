@@ -11,9 +11,11 @@ import java.io.Reader;
 import java.io.Writer;
 import java.nio.charset.Charset;
 import java.sql.Blob;
+import java.sql.Clob;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
+import java.sql.RowId;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Collection;
@@ -83,7 +85,12 @@ public class CommandClient
 		return buf.toString();
 	}
 
-	protected static Tuple3<String, String, String> link(Entrance entr)
+	public static String decode(String text)
+	{
+		return text;
+	}
+
+	public static Tuple3<String, String, String> link(Entrance entr)
 	{
 		String url = entr.parameter("url"), usr = entr.parameter("usr"), pwd = entr.parameter("pwd");
 
@@ -101,7 +108,7 @@ public class CommandClient
 					{
 						url = url == null ? conf.attrString("url") : url;
 						usr = usr == null ? conf.attrString("usr") : usr;
-						pwd = pwd == null ? conf.attrString("pwd") : pwd;
+						pwd = pwd == null ? decode(conf.attrString("pwd")) : pwd;
 					}
 				}
 			}
@@ -129,7 +136,7 @@ public class CommandClient
 		Tuple3<String, String, String> link = link(entr);
 		return new CommandClient() //
 				.setDataBase(link._1, link._2, link._3) //
-				.setConcurrency(Variable.asInteger(entr.parameter("conc"), 0)) //
+				.setConcurrency(Variable.asInteger(entr.parameter("conc"), 1)) //
 				.setRebalance(Variable.asInteger(entr.parameter("rebalance"), DEFAULT_REBALANCE)) //
 				.setBatchSize(Variable.asInteger(entr.parameter("batchSize"), DEFAULT_BATCH_SIZE)) //
 				.setRewriteBatch("true".equalsIgnoreCase(entr.parameter("rewriteBatch"))) //
@@ -172,6 +179,52 @@ public class CommandClient
 			{
 				return Tools.getDateTimeString((Date) value, Tools.LOCAL_DATETIME_FORMAT);
 			}
+		}).transforms(Clob.class, new JSON.Transform<String>()
+		{
+			private static final long serialVersionUID = 1L;
+
+			@Override
+			public String transform(JSON json, String entry, Object value)
+			{
+				Reader r = null;
+				try
+				{
+					r = ((Clob) value).getCharacterStream();
+					return Tools.readerToStringBuilder(r).toString();
+				}
+				catch (SQLException e)
+				{
+					return e.getLocalizedMessage();
+				}
+				finally
+				{
+					if (r != null)
+					{
+						try
+						{
+							r.close();
+						}
+						catch (IOException e)
+						{
+						}
+					}
+				}
+			}
+		}).transforms(RowId.class, new JSON.Transform<String>()
+		{
+			private static final long serialVersionUID = 1L;
+
+			@Override
+			public String transform(JSON json, String entry, Object value)
+			{
+				byte[] bs = ((RowId) value).getBytes();
+				StringBuilder buf = new StringBuilder(bs.length);
+				for (byte b : bs)
+				{
+					buf.append((char) b);
+				}
+				return buf.toString();
+			}
 		}).transforms(Blob.class, new JSON.Transform<String>()
 		{
 			private static final long serialVersionUID = 1L;
@@ -179,12 +232,10 @@ public class CommandClient
 			@Override
 			public String transform(JSON json, String entry, Object value)
 			{
-				Blob blob = (Blob) value;
-
 				InputStream is = null;
 				try
 				{
-					is = blob.getBinaryStream();
+					is = ((Blob) value).getBinaryStream();
 
 					Collection<String> hex = new LinkedList<String>();
 
@@ -222,23 +273,16 @@ public class CommandClient
 			@Override
 			public String transform(JSON json, String entry, Object value)
 			{
-				return Tools.jointStrings(" ", Tools.dumpBytes(((byte[]) value)));
+				return Tools.jointStrings(" ", Tools.dumpBytes((byte[]) value));
 			}
 		}).transforms(Object.class, new JSON.Transform<Object>()
 		{
-			/**
-			 * 
-			 */
 			private static final long serialVersionUID = 1L;
 
 			@Override
 			public Object transform(JSON json, String entry, Object value)
 			{
-				if (value == null)
-				{
-					return null;
-				}
-				else if (BASICS.contains(value.getClass()))
+				if (BASICS.contains(value.getClass()))
 				{
 					return value;
 				}
