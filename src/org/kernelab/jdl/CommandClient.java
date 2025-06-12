@@ -1,5 +1,6 @@
 package org.kernelab.jdl;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -24,6 +25,8 @@ import java.util.List;
 import java.util.Scanner;
 import java.util.Set;
 
+import org.kernelab.basis.Canal.Tuple;
+import org.kernelab.basis.Canal.Tuple3;
 import org.kernelab.basis.Entrance;
 import org.kernelab.basis.JSON;
 import org.kernelab.basis.JSON.JSAN;
@@ -80,6 +83,33 @@ public class CommandClient
 		return buf.toString();
 	}
 
+	protected static Tuple3<String, String, String> link(Entrance entr)
+	{
+		String url = entr.parameter("url"), usr = entr.parameter("usr"), pwd = entr.parameter("pwd");
+
+		String dict = entr.parameter("dict"), link = entr.parameter("link");
+		if (dict != null && link != null)
+		{
+			File file = new File(dict);
+			if (file.isFile())
+			{
+				JSON json = JSON.Parse(file, "UTF-8");
+				if (json != null)
+				{
+					JSON conf = json.attrJSON(link);
+					if (conf != null)
+					{
+						url = url == null ? conf.attrString("url") : url;
+						usr = usr == null ? conf.attrString("usr") : usr;
+						pwd = pwd == null ? conf.attrString("pwd") : pwd;
+					}
+				}
+			}
+		}
+
+		return Tuple.of(url, usr, pwd);
+	}
+
 	public static void main(String[] args)
 	{
 		try
@@ -96,8 +126,9 @@ public class CommandClient
 	public static CommandClient newInstance(String[] args)
 	{
 		Entrance entr = new Entrance().handle(args);
+		Tuple3<String, String, String> link = link(entr);
 		return new CommandClient() //
-				.setDataBase(entr.parameter("url"), entr.parameter("usr"), entr.parameter("pwd")) //
+				.setDataBase(link._1, link._2, link._3) //
 				.setConcurrency(Variable.asInteger(entr.parameter("conc"), 0)) //
 				.setRebalance(Variable.asInteger(entr.parameter("rebalance"), DEFAULT_REBALANCE)) //
 				.setBatchSize(Variable.asInteger(entr.parameter("batchSize"), DEFAULT_BATCH_SIZE)) //
