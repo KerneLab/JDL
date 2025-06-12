@@ -16,10 +16,13 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Scanner;
+import java.util.Set;
 
 import org.kernelab.basis.Entrance;
 import org.kernelab.basis.JSON;
@@ -32,21 +35,31 @@ import org.kernelab.basis.sql.SQLKit;
 
 public class CommandClient
 {
-	public static final int		REBALANCE_NONE			= 0;
+	public static final int			REBALANCE_NONE			= 0;
 
-	public static final int		REBALANCE_PICKONE		= 1;
+	public static final int			REBALANCE_PICKONE		= 1;
 
-	public static final int		REBALANCE_REARRANGE		= 2;
+	public static final int			REBALANCE_REARRANGE		= 2;
 
-	public static final String	DEFAULT_HINT			= "SQL>";
+	public static final String		DEFAULT_HINT			= "SQL>";
 
-	public static final String	DEFAULT_DELIMITER		= ";";
+	public static final String		DEFAULT_DELIMITER		= ";";
 
-	public static final int		DEFAULT_REBALANCE		= REBALANCE_NONE;
+	public static final int			DEFAULT_REBALANCE		= REBALANCE_NONE;
 
-	public static final int		DEFAULT_BATCH_SIZE		= 500;
+	public static final int			DEFAULT_BATCH_SIZE		= 500;
 
-	public static final boolean	DEFAULT_REWRITE_BATCH	= false;
+	public static final boolean		DEFAULT_REWRITE_BATCH	= false;
+
+	protected static Set<Class<?>>	BASICS					= new HashSet<Class<?>>();
+
+	static
+	{
+		BASICS.addAll(Tools.getBoxingTypes());
+		BASICS.addAll(Tools.getPrimitiveTypes());
+		BASICS.add(String.class);
+		BASICS = Collections.unmodifiableSet(BASICS);
+	}
 
 	public static String composeErrorText(Throwable err)
 	{
@@ -128,8 +141,7 @@ public class CommandClient
 			{
 				return Tools.getDateTimeString((Date) value, Tools.LOCAL_DATETIME_FORMAT);
 			}
-		});
-		jsan.transforms(Blob.class, new JSON.Transform<String>()
+		}).transforms(Blob.class, new JSON.Transform<String>()
 		{
 			private static final long serialVersionUID = 1L;
 
@@ -180,6 +192,33 @@ public class CommandClient
 			public String transform(JSON json, String entry, Object value)
 			{
 				return Tools.jointStrings(" ", Tools.dumpBytes(((byte[]) value)));
+			}
+		}).transforms(Object.class, new JSON.Transform<Object>()
+		{
+			/**
+			 * 
+			 */
+			private static final long serialVersionUID = 1L;
+
+			@Override
+			public Object transform(JSON json, String entry, Object value)
+			{
+				if (value == null)
+				{
+					return null;
+				}
+				else if (BASICS.contains(value.getClass()))
+				{
+					return value;
+				}
+				else if (value instanceof JSON)
+				{
+					return value;
+				}
+				else
+				{
+					return value.toString();
+				}
 			}
 		});
 
