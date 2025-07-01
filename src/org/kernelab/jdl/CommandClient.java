@@ -22,16 +22,20 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Scanner;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-import org.kernelab.basis.Canal.Tuple;
-import org.kernelab.basis.Canal.Tuple3;
+import org.kernelab.basis.Canal;
 import org.kernelab.basis.Entrance;
 import org.kernelab.basis.JSON;
 import org.kernelab.basis.JSON.JSAN;
+import org.kernelab.basis.Mapper;
 import org.kernelab.basis.Tools;
 import org.kernelab.basis.Variable;
 import org.kernelab.basis.sql.DataBase;
@@ -40,6 +44,32 @@ import org.kernelab.basis.sql.SQLKit;
 
 public class CommandClient
 {
+	public static final String		KEY_DICT				= "dict";
+
+	public static final String		KEY_LINK				= "link";
+
+	public static final String		KEY_HINT				= "hint";
+
+	public static final String		KEY_URL					= "url";
+
+	public static final String		KEY_USR					= "usr";
+
+	public static final String		KEY_PWD					= "pwd";
+
+	public static final String		KEY_CONC				= "conc";
+
+	public static final String		KEY_REBALANCE			= "rebalance";
+
+	public static final String		KEY_BATCH_SIZE			= "batchSize";
+
+	public static final String		KEY_REWRITE_BATCH		= "rewriteBatch";
+
+	public static final String		KEY_AUTO_COMMIT			= "autoCommit";
+
+	public static final String		KEY_IGNORE_ERROR		= "ignoreError";
+
+	public static final String		KEY_USE_RAW_CMD			= "useRawCmd";
+
 	public static final int			REBALANCE_NONE			= 0;
 
 	public static final int			REBALANCE_PICKONE		= 1;
@@ -55,6 +85,12 @@ public class CommandClient
 	public static final int			DEFAULT_BATCH_SIZE		= 500;
 
 	public static final boolean		DEFAULT_REWRITE_BATCH	= false;
+
+	protected static final Pattern	REGEX_LINK				= Pattern.compile("^LINK\\s+(.+)$",
+			Pattern.CASE_INSENSITIVE);
+
+	protected static final Pattern	REGEX_DELIMITER			= Pattern.compile("^DELIMITER\\b(.*)$",
+			Pattern.CASE_INSENSITIVE);
 
 	protected static Set<Class<?>>	BASICS					= new HashSet<Class<?>>();
 
@@ -90,33 +126,6 @@ public class CommandClient
 		return text;
 	}
 
-	public static Tuple3<String, String, String> link(Entrance entr)
-	{
-		String url = entr.parameter("url"), usr = entr.parameter("usr"), pwd = entr.parameter("pwd");
-
-		String dict = entr.parameter("dict"), link = entr.parameter("link");
-		if (dict != null && link != null)
-		{
-			File file = new File(dict);
-			if (file.isFile())
-			{
-				JSON json = JSON.Parse(file, "UTF-8");
-				if (json != null)
-				{
-					JSON conf = json.attrJSON(link);
-					if (conf != null)
-					{
-						url = url == null ? conf.attrString("url") : url;
-						usr = usr == null ? conf.attrString("usr") : usr;
-						pwd = pwd == null ? decode(conf.attrString("pwd")) : pwd;
-					}
-				}
-			}
-		}
-
-		return Tuple.of(url, usr, pwd);
-	}
-
 	public static void main(String[] args)
 	{
 		try
@@ -130,21 +139,14 @@ public class CommandClient
 		}
 	}
 
-	public static CommandClient newInstance(String[] args)
+	public static CommandClient newInstance(String[] args) throws Exception
 	{
 		Entrance entr = new Entrance().handle(args);
-		Tuple3<String, String, String> link = link(entr);
 		return new CommandClient() //
-				.setDataBase(link._1, link._2, link._3) //
-				.setConcurrency(Variable.asInteger(entr.parameter("conc"), 1)) //
-				.setRebalance(Variable.asInteger(entr.parameter("rebalance"), DEFAULT_REBALANCE)) //
-				.setBatchSize(Variable.asInteger(entr.parameter("batchSize"), DEFAULT_BATCH_SIZE)) //
-				.setRewriteBatch("true".equalsIgnoreCase(entr.parameter("rewriteBatch"))) //
-				.setAutoCommit(!"false".equalsIgnoreCase(entr.parameter("autoCommit"))) //
-				.setIgnoreError("true".equalsIgnoreCase(entr.parameter("ignoreError"))) //
-				.setUseRawCmd("true".equalsIgnoreCase(entr.parameter("useRawCmd"))) //
-				.setHint(entr.parameter("hint")) //
-		;
+				.setEntr(entr) //
+				.setHint(entr.parameter(KEY_HINT)) //
+				.setDict(entr.parameter(KEY_DICT)) //
+				.link(entr.parameter(KEY_LINK));
 	}
 
 	public static PrintWriter printerOf(OutputStream os)
@@ -311,43 +313,88 @@ public class CommandClient
 		return new OutputStreamWriter(os, Charset.defaultCharset());
 	}
 
-	private PrintWriter	out				= new PrintWriter(writerOf(System.out), true);
+	private PrintWriter							out				= new PrintWriter(writerOf(System.out), true);
 
-	private PrintWriter	err				= new PrintWriter(writerOf(System.err), true);
+	private PrintWriter							err				= new PrintWriter(writerOf(System.err), true);
 
-	private String		delimiter		= DEFAULT_DELIMITER;
+	private String								delimiter		= DEFAULT_DELIMITER;
 
-	private String		hint			= DEFAULT_HINT;
+	private String								hint			= DEFAULT_HINT;
 
-	private int			conc			= 1;
+	private String								link;
 
-	private int			rebalance		= DEFAULT_REBALANCE;
+	private Entrance							entr;
 
-	private boolean		autoCommit		= true;
+	private Map<String, Map<String, String>>	dict			= new LinkedHashMap<String, Map<String, String>>();
 
-	private boolean		ignoreError		= false;
+	private int									conc			= 1;
 
-	private boolean		useRawCmd		= false;
+	private int									rebalance		= DEFAULT_REBALANCE;
 
-	private int			batchSize		= DEFAULT_BATCH_SIZE;
+	private boolean								autoCommit		= true;
 
-	private boolean		rewriteBatch	= DEFAULT_REWRITE_BATCH;
+	private boolean								ignoreError		= false;
 
-	private DataBase	dataBase;
+	private boolean								useRawCmd		= false;
 
-	private Connection	connection;
+	private int									batchSize		= DEFAULT_BATCH_SIZE;
 
-	private Statement	statement;
+	private boolean								rewriteBatch	= DEFAULT_REWRITE_BATCH;
 
-	private LoadMaster	loader;
+	private DataBase							dataBase;
 
-	private boolean		exit			= false;
+	private Connection							connection;
+
+	private Statement							statement;
+
+	private LoadMaster							loader;
+
+	private boolean								exit			= false;
+
+	protected void close(Connection conn) throws SQLException
+	{
+		if (conn != null)
+		{
+			try
+			{
+				conn.commit();
+			}
+			catch (SQLException e)
+			{
+				if (this.isIgnoreError())
+				{
+					printError(e);
+				}
+				else
+				{
+					throw e;
+				}
+			}
+			try
+			{
+				conn.close();
+			}
+			catch (SQLException e)
+			{
+				if (this.isIgnoreError())
+				{
+					printError(e);
+				}
+				else
+				{
+					throw e;
+				}
+			}
+			this.statement = null;
+		}
+	}
 
 	public boolean execute(String cmd)
 	{
 		try
 		{
 			cmd = cmd.trim();
+			Matcher m = null;
 			if (cmd.equalsIgnoreCase("EXIT"))
 			{
 				this.exit = true;
@@ -359,6 +406,10 @@ public class CommandClient
 			else if (cmd.equalsIgnoreCase("ROLLBACK"))
 			{
 				this.getConnection().rollback();
+			}
+			else if ((m = REGEX_LINK.matcher(cmd)).matches())
+			{
+				this.link(m.group(1));
 			}
 			else
 			{
@@ -564,6 +615,16 @@ public class CommandClient
 		return delimiter;
 	}
 
+	protected Map<String, Map<String, String>> getDict()
+	{
+		return dict;
+	}
+
+	protected Entrance getEntr()
+	{
+		return entr;
+	}
+
 	protected PrintWriter getErr()
 	{
 		return err;
@@ -586,9 +647,29 @@ public class CommandClient
 		}
 	}
 
+	protected String getLink()
+	{
+		return link;
+	}
+
 	protected PrintWriter getOut()
 	{
 		return out;
+	}
+
+	protected String getParam(String name, Map<String, String> prop)
+	{
+		return getParam(name, prop, null);
+	}
+
+	protected String getParam(String name, Map<String, String> prop, String deft)
+	{
+		String value = this.getEntr().parameter(name);
+		if (value == null && prop != null)
+		{
+			value = prop.get(name);
+		}
+		return value != null ? value : deft;
 	}
 
 	public int getRebalance()
@@ -601,6 +682,7 @@ public class CommandClient
 		List<String> lines = new LinkedList<String>();
 		boolean suc = true;
 		Scanner input = null;
+		Matcher m = null;
 		try
 		{
 			this.listenShutdown();
@@ -631,9 +713,9 @@ public class CommandClient
 					break;
 				}
 
-				if (line.matches("(?i)^DELIMITER\\b(.*)$"))
+				if ((m = REGEX_DELIMITER.matcher(line)).matches())
 				{
-					this.setDelimiter(line.replaceFirst("(?i)^DELIMITER\\b(.*)$", "$1"));
+					this.setDelimiter(m.group(1));
 				}
 				else
 				{
@@ -733,6 +815,36 @@ public class CommandClient
 	public boolean isUseRawCmd()
 	{
 		return useRawCmd;
+	}
+
+	protected CommandClient link(Map<String, String> prop)
+	{
+		String url = getParam(KEY_URL, prop);
+		String usr = getParam(KEY_USR, prop);
+		String pwd = getParam(KEY_PWD, prop);
+		return this.setDataBase(url, usr, pwd) //
+				.setConcurrency(Variable.asInteger(getParam(KEY_CONC, prop), 1)) //
+				.setRebalance(Variable.asInteger(getParam(KEY_REBALANCE, prop), DEFAULT_REBALANCE)) //
+				.setBatchSize(Variable.asInteger(getParam(KEY_BATCH_SIZE, prop), DEFAULT_BATCH_SIZE)) //
+				.setRewriteBatch("true".equalsIgnoreCase(getParam(KEY_REWRITE_BATCH, prop))) //
+				.setAutoCommit(!"false".equalsIgnoreCase(getParam(KEY_AUTO_COMMIT, prop))) //
+				.setIgnoreError("true".equalsIgnoreCase(getParam(KEY_IGNORE_ERROR, prop))) //
+				.setUseRawCmd("true".equalsIgnoreCase(getParam(KEY_USE_RAW_CMD, prop))) //
+		;
+	}
+
+	public CommandClient link(String link) throws Exception
+	{
+		if (!Tools.equals(this.getLink(), link))
+		{
+			this.close(this.getConnection(false));
+			this.setLink(link);
+			if (link != null)
+			{
+				this.link(this.getDict().get(link));
+			}
+		}
+		return this;
 	}
 
 	protected void listenShutdown()
@@ -852,6 +964,50 @@ public class CommandClient
 		return this;
 	}
 
+	protected CommandClient setDict(Map<String, Map<String, String>> dict)
+	{
+		this.dict = dict;
+		return this;
+	}
+
+	protected CommandClient setDict(String path)
+	{
+		this.getDict().clear();
+
+		File file = new File(path);
+		if (file.isFile())
+		{
+			JSON json = JSON.Parse(file, "UTF-8");
+			if (json != null)
+			{
+				for (String key : json.keySet())
+				{
+					JSON val = json.attrJSON(key);
+					if (val != null)
+					{
+						Map<String, String> prop = Canal.of(val).mapValues(new Mapper<Object, String>()
+						{
+							@Override
+							public String map(Object el) throws Exception
+							{
+								return el != null ? el.toString() : null;
+							}
+						}).collectAsMap();
+						this.getDict().put(key, prop);
+					}
+				}
+			}
+		}
+
+		return this;
+	}
+
+	protected CommandClient setEntr(Entrance entr)
+	{
+		this.entr = entr;
+		return this;
+	}
+
 	public CommandClient setErr(PrintWriter err)
 	{
 		this.err = err;
@@ -873,6 +1029,12 @@ public class CommandClient
 	public CommandClient setIgnoreError(boolean ignore)
 	{
 		this.ignoreError = ignore;
+		return this;
+	}
+
+	protected CommandClient setLink(String link)
+	{
+		this.link = link;
 		return this;
 	}
 
