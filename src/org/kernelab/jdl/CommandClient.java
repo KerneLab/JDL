@@ -26,6 +26,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Scanner;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -55,6 +56,10 @@ public class CommandClient
 	public static final String		KEY_USR					= "usr";
 
 	public static final String		KEY_PWD					= "pwd";
+
+	public static final String		KEY_CRYPT				= "crypt";
+
+	public static final String		KEY_QUIET				= "quiet";
 
 	public static final String		KEY_CONC				= "conc";
 
@@ -86,8 +91,14 @@ public class CommandClient
 
 	public static final boolean		DEFAULT_REWRITE_BATCH	= false;
 
-	protected static final Pattern	REGEX_LINK				= Pattern.compile("^LINK\\s+(.+)$",
-			Pattern.CASE_INSENSITIVE);
+	protected static final Pattern	REGEX_LINK				= Pattern.compile("^LINK\\b(.*)$",
+			Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
+	protected static final Pattern	REGEX_ECHO				= Pattern.compile("^ECHO\\b(.*)$",
+			Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
+	protected static final Pattern	REGEX_QUIET				= Pattern.compile("^QUIET\\b(.*)$",
+			Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
 	protected static final Pattern	REGEX_DELIMITER			= Pattern.compile("^DELIMITER\\b(.*)$",
 			Pattern.CASE_INSENSITIVE);
@@ -104,21 +115,7 @@ public class CommandClient
 
 	public static String composeErrorText(Throwable err)
 	{
-		StringBuilder buf = new StringBuilder(
-				"\nErrorCatch: " + err.getClass().getName() + ": " + err.getLocalizedMessage());
-
-		int i = 0;
-		for (StackTraceElement trace : err.getStackTrace())
-		{
-			buf.append("\n\tat " + trace);
-			i++;
-			if (i >= 20)
-			{
-				break;
-			}
-		}
-
-		return buf.toString();
+		return Tools.textOf(new StringBuilder("\nErrorCatch: "), err, 20).toString();
 	}
 
 	public static String decode(String text)
@@ -146,6 +143,8 @@ public class CommandClient
 				.setEntr(entr) //
 				.setHint(entr.parameter(KEY_HINT)) //
 				.setDict(entr.parameter(KEY_DICT)) //
+				.setQuiet("true".equalsIgnoreCase(entr.parameter(KEY_QUIET))
+						|| (entr.hasParameter(KEY_QUIET) && Tools.isNullOrWhite(entr.parameter(KEY_QUIET)))) //
 				.link(entr.parameter(KEY_LINK));
 	}
 
@@ -327,6 +326,8 @@ public class CommandClient
 
 	private Map<String, Map<String, String>>	dict			= new LinkedHashMap<String, Map<String, String>>();
 
+	private boolean								quiet			= false;
+
 	private int									conc			= 1;
 
 	private int									rebalance		= DEFAULT_REBALANCE;
@@ -351,42 +352,67 @@ public class CommandClient
 
 	private boolean								exit			= false;
 
-	protected void close(Connection conn) throws SQLException
+	protected void closeConnection() throws SQLException
 	{
+		Connection conn = this.getConnection(false);
 		if (conn != null)
 		{
 			try
 			{
-				conn.commit();
+				try
+				{
+					if (!this.isAutoCommit())
+					{
+						conn.commit();
+					}
+				}
+				catch (SQLException e)
+				{
+					if (this.isIgnoreError())
+					{
+						printError(e);
+					}
+					else
+					{
+						throw e;
+					}
+				}
+				try
+				{
+					conn.close();
+				}
+				catch (SQLException e)
+				{
+					if (this.isIgnoreError())
+					{
+						printError(e);
+					}
+					else
+					{
+						throw e;
+					}
+				}
 			}
 			catch (SQLException e)
 			{
-				if (this.isIgnoreError())
-				{
-					printError(e);
-				}
-				else
-				{
-					throw e;
-				}
+				throw e;
 			}
-			try
+			finally
 			{
-				conn.close();
+				this.statement = null;
+				this.connection = null;
 			}
-			catch (SQLException e)
-			{
-				if (this.isIgnoreError())
-				{
-					printError(e);
-				}
-				else
-				{
-					throw e;
-				}
-			}
-			this.statement = null;
 		}
+	}
+
+	protected String decrypt(String cls, String pwd) throws Exception
+	{
+		return cls != null ? ((Cryptor) Class.forName(cls).newInstance()).decrypt(pwd) : pwd;
+	}
+
+	public void echo(String msg)
+	{
+		output(msg != null ? msg.trim() : "null", true);
 	}
 
 	public boolean execute(String cmd)
@@ -395,8 +421,12 @@ public class CommandClient
 		{
 			cmd = cmd.trim();
 			Matcher m = null;
-			if (cmd.equalsIgnoreCase("EXIT"))
+			if (Tools.isNullOrWhite(cmd))
 			{
+			}
+			else if (cmd.equalsIgnoreCase("EXIT"))
+			{
+				this.closeConnection();
 				this.exit = true;
 			}
 			else if (cmd.equalsIgnoreCase("COMMIT"))
@@ -410,6 +440,14 @@ public class CommandClient
 			else if ((m = REGEX_LINK.matcher(cmd)).matches())
 			{
 				this.link(m.group(1));
+			}
+			else if ((m = REGEX_ECHO.matcher(cmd)).matches())
+			{
+				this.echo(m.group(1));
+			}
+			else if ((m = REGEX_QUIET.matcher(cmd)).matches())
+			{
+				this.setQuiet(m.group(1));
 			}
 			else
 			{
@@ -758,12 +796,13 @@ public class CommandClient
 				conn = this.getConnection(false);
 				if (conn != null && !this.isAutoCommit())
 				{
-					conn.rollback();
+					conn.commit();
 				}
 			}
 			catch (SQLException e)
 			{
 				printError(e);
+				suc = false;
 			}
 			if (conn != null)
 			{
@@ -807,6 +846,11 @@ public class CommandClient
 		return ignoreError;
 	}
 
+	public boolean isQuiet()
+	{
+		return quiet;
+	}
+
 	public boolean isRewriteBatch()
 	{
 		return rewriteBatch;
@@ -817,11 +861,13 @@ public class CommandClient
 		return useRawCmd;
 	}
 
-	protected CommandClient link(Map<String, String> prop)
+	protected CommandClient link(Map<String, String> prop) throws Exception
 	{
 		String url = getParam(KEY_URL, prop);
 		String usr = getParam(KEY_USR, prop);
 		String pwd = getParam(KEY_PWD, prop);
+		String crypt = getParam(KEY_CRYPT, prop);
+		pwd = decrypt(crypt, pwd);
 		return this.setDataBase(url, usr, pwd) //
 				.setConcurrency(Variable.asInteger(getParam(KEY_CONC, prop), 1)) //
 				.setRebalance(Variable.asInteger(getParam(KEY_REBALANCE, prop), DEFAULT_REBALANCE)) //
@@ -835,15 +881,24 @@ public class CommandClient
 
 	public CommandClient link(String link) throws Exception
 	{
-		if (!Tools.equals(this.getLink(), link))
+		link = Tools.notNullOrWhite(link) ? link.trim() : null;
+		if (this.getLink() == null || !Tools.equals(this.getLink(), link))
 		{
-			this.close(this.getConnection(false));
-			this.setLink(link);
-			if (link != null)
+			this.closeConnection();
+			Map<String, String> prop = this.getDict().get(link);
+			if (prop == null && link != null)
 			{
-				this.link(this.getDict().get(link));
+				throw new NoSuchElementException(link);
 			}
+			this.link(prop);
+			this.setLink(link);
 		}
+
+		if (this.getLink() != null && (!this.isQuiet() || Tools.isNullOrWhite(link)))
+		{
+			output(this.getLink(), true);
+		}
+
 		return this;
 	}
 
@@ -974,6 +1029,11 @@ public class CommandClient
 	{
 		this.getDict().clear();
 
+		if (path == null)
+		{
+			return this;
+		}
+
 		File file = new File(path);
 		if (file.isFile())
 		{
@@ -993,6 +1053,7 @@ public class CommandClient
 								return el != null ? el.toString() : null;
 							}
 						}).collectAsMap();
+						prop.put("id", key);
 						this.getDict().put(key, prop);
 					}
 				}
@@ -1042,6 +1103,17 @@ public class CommandClient
 	{
 		this.out = output;
 		return this;
+	}
+
+	public CommandClient setQuiet(boolean silent)
+	{
+		this.quiet = silent;
+		return this;
+	}
+
+	protected CommandClient setQuiet(String quiet)
+	{
+		return this.setQuiet(!"false".equalsIgnoreCase(quiet != null ? quiet.trim() : null));
 	}
 
 	public CommandClient setRebalance(int rebalance)
