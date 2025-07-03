@@ -21,6 +21,7 @@ import java.sql.Statement;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
@@ -405,9 +406,9 @@ public class CommandClient
 		}
 	}
 
-	protected String decrypt(String cls, String pwd) throws Exception
+	protected String decrypt(String cls, String pwd, Map<String, String> prop) throws Exception
 	{
-		return cls != null ? ((Cryptor) Class.forName(cls).newInstance()).decrypt(pwd) : pwd;
+		return cls != null ? ((Cryptor) Class.forName(cls).newInstance()).decrypt(pwd, prop) : pwd;
 	}
 
 	public void echo(String msg)
@@ -695,7 +696,7 @@ public class CommandClient
 		return out;
 	}
 
-	protected String getParam(String name, Map<String, String> prop)
+	public String getParam(String name, Map<String, String> prop)
 	{
 		return getParam(name, prop, null);
 	}
@@ -866,8 +867,18 @@ public class CommandClient
 		String url = getParam(KEY_URL, prop);
 		String usr = getParam(KEY_USR, prop);
 		String pwd = getParam(KEY_PWD, prop);
+
 		String crypt = getParam(KEY_CRYPT, prop);
-		pwd = decrypt(crypt, pwd);
+		Map<String, String> map = new HashMap<String, String>();
+		map.put(KEY_URL, url);
+		map.put(KEY_USR, usr);
+		map.put(KEY_PWD, pwd);
+		if (prop != null && prop.containsKey(KEY_LINK))
+		{
+			map.put(KEY_LINK, prop.get(KEY_LINK));
+		}
+		pwd = decrypt(crypt, pwd, map);
+
 		return this.setDataBase(url, usr, pwd) //
 				.setConcurrency(Variable.asInteger(getParam(KEY_CONC, prop), 1)) //
 				.setRebalance(Variable.asInteger(getParam(KEY_REBALANCE, prop), DEFAULT_REBALANCE)) //
@@ -1053,7 +1064,7 @@ public class CommandClient
 								return el != null ? el.toString() : null;
 							}
 						}).collectAsMap();
-						prop.put("id", key);
+						prop.put(KEY_LINK, key);
 						this.getDict().put(key, prop);
 					}
 				}
