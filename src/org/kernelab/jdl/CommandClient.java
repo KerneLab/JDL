@@ -901,7 +901,7 @@ public class CommandClient
 			this.setLink(link);
 		}
 
-		if (this.getLink() != null && (!this.isQuiet() || link != null))
+		if (this.getLink() != null && (!this.isQuiet() || link == null))
 		{
 			output(this.getLink(), true);
 		}
