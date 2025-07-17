@@ -146,6 +146,7 @@ public class CommandClient
 				.setDict(entr.parameter(KEY_DICT)) //
 				.setQuiet("true".equalsIgnoreCase(entr.parameter(KEY_QUIET))
 						|| (entr.hasParameter(KEY_QUIET) && Tools.isNullOrWhite(entr.parameter(KEY_QUIET)))) //
+				.setIgnoreError("true".equalsIgnoreCase(entr.parameter(KEY_IGNORE_ERROR))) //
 				.link(entr.parameter(KEY_LINK));
 	}
 
@@ -351,6 +352,8 @@ public class CommandClient
 
 	private LoadMaster							loader;
 
+	private boolean								success			= true;
+
 	private boolean								exit			= false;
 
 	protected void closeConnection() throws SQLException
@@ -364,7 +367,14 @@ public class CommandClient
 				{
 					if (!this.isAutoCommit())
 					{
-						conn.commit();
+						if (this.isSuccess())
+						{
+							conn.commit();
+						}
+						else
+						{
+							conn.rollback();
+						}
 					}
 				}
 				catch (SQLException e)
@@ -378,6 +388,7 @@ public class CommandClient
 						throw e;
 					}
 				}
+
 				try
 				{
 					conn.close();
@@ -393,10 +404,6 @@ public class CommandClient
 						throw e;
 					}
 				}
-			}
-			catch (SQLException e)
-			{
-				throw e;
 			}
 			finally
 			{
@@ -703,10 +710,10 @@ public class CommandClient
 
 	protected String getParam(String name, Map<String, String> prop, String deft)
 	{
-		String value = this.getEntr().parameter(name);
-		if (value == null && prop != null)
+		String value = prop != null ? prop.get(name) : null;
+		if (value == null)
 		{
-			value = prop.get(name);
+			value = this.getEntr().parameter(name);
 		}
 		return value != null ? value : deft;
 	}
@@ -719,7 +726,6 @@ public class CommandClient
 	public boolean interact()
 	{
 		List<String> lines = new LinkedList<String>();
-		boolean suc = true;
 		Scanner input = null;
 		Matcher m = null;
 		try
@@ -765,8 +771,8 @@ public class CommandClient
 						{
 							String cmd = Tools.jointStrings("\n", lines)
 									.replaceFirst("(?s)^(.+)\\s*?\\Q" + this.getDelimiter() + "\\E\\s*$", "$1");
-							suc &= execute(cmd);
-							if (!suc && !this.isIgnoreError())
+							this.setSuccess(execute(cmd));
+							if (!this.isSuccess() && !this.isIgnoreError())
 							{
 								return false;
 							}
@@ -791,33 +797,18 @@ public class CommandClient
 			{
 				input.close();
 			}
-			Connection conn = null;
 			try
 			{
-				conn = this.getConnection(false);
-				if (conn != null && !this.isAutoCommit())
-				{
-					conn.commit();
-				}
+				this.closeConnection();
 			}
 			catch (SQLException e)
 			{
 				printError(e);
-				suc = false;
-			}
-			if (conn != null)
-			{
-				try
-				{
-					conn.close();
-				}
-				catch (SQLException e)
-				{
-				}
+				this.setSuccess(false);
 			}
 		}
 
-		return suc;
+		return this.isSuccess();
 	}
 
 	protected boolean isAllPrimaryData(JSON json)
@@ -857,6 +848,11 @@ public class CommandClient
 		return rewriteBatch;
 	}
 
+	public boolean isSuccess()
+	{
+		return success;
+	}
+
 	public boolean isUseRawCmd()
 	{
 		return useRawCmd;
@@ -893,7 +889,7 @@ public class CommandClient
 	public CommandClient link(String link) throws Exception
 	{
 		link = Tools.notNullOrWhite(link) ? link.trim() : null;
-		if (this.getLink() == null || !Tools.equals(this.getLink(), link))
+		if (this.getLink() == null || (link != null && !Tools.equals(this.getLink(), link)))
 		{
 			this.closeConnection();
 			Map<String, String> prop = this.getDict().get(link);
@@ -905,7 +901,7 @@ public class CommandClient
 			this.setLink(link);
 		}
 
-		if (this.getLink() != null && (!this.isQuiet() || Tools.isNullOrWhite(link)))
+		if (this.getLink() != null && (!this.isQuiet() || link != null))
 		{
 			output(this.getLink(), true);
 		}
@@ -1136,6 +1132,12 @@ public class CommandClient
 	public CommandClient setRewriteBatch(boolean rewriteBatch)
 	{
 		this.rewriteBatch = rewriteBatch;
+		return this;
+	}
+
+	protected CommandClient setSuccess(boolean success)
+	{
+		this.success &= success;
 		return this;
 	}
 
