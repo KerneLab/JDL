@@ -195,9 +195,9 @@ public class CommandClient
 					r = ((Clob) value).getCharacterStream();
 					return Tools.readerToStringBuilder(r).toString();
 				}
-				catch (SQLException e)
+				catch (Exception e)
 				{
-					return e.getLocalizedMessage();
+					throw Tools.getRuntimeException(e);
 				}
 				finally
 				{
@@ -253,7 +253,7 @@ public class CommandClient
 				}
 				catch (Exception e)
 				{
-					return e.getLocalizedMessage();
+					throw Tools.getRuntimeException(e);
 				}
 				finally
 				{
