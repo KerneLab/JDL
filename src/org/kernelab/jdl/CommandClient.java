@@ -114,9 +114,10 @@ public class CommandClient
 		BASICS = Collections.unmodifiableSet(BASICS);
 	}
 
-	public static String composeErrorText(Throwable err)
+	public static String composeErrorText(String cmd, Throwable err)
 	{
-		return Tools.textOf(new StringBuilder("\nErrorCatch: "), err, 20).toString();
+		return Tools.textOf(new StringBuilder("\nErrorCatch: " + (cmd != null ? "[" + cmd + "] " : "")), err, 20)
+				.toString();
 	}
 
 	public static String decode(String text)
@@ -157,11 +158,16 @@ public class CommandClient
 
 	public static void printError(PrintWriter out, Throwable err)
 	{
+		printError(out, err, null);
+	}
+
+	public static void printError(PrintWriter out, Throwable err, String cmd)
+	{
 		if (out == null || err == null)
 		{
 			return;
 		}
-		out.println(composeErrorText(err));
+		out.println(composeErrorText(cmd, err));
 	}
 
 	public static Reader readerOf(InputStream is)
@@ -475,7 +481,7 @@ public class CommandClient
 		}
 		catch (Throwable e)
 		{
-			this.printError(e);
+			this.printError(e, cmd);
 			return false;
 		}
 	}
@@ -966,7 +972,12 @@ public class CommandClient
 
 	protected void printError(Throwable err)
 	{
-		printError(this.getErr(), err);
+		printError(err, null);
+	}
+
+	protected void printError(Throwable err, String cmd)
+	{
+		printError(this.getErr(), err, cmd);
 	}
 
 	public CommandClient setAutoCommit(boolean autoCommit)
